@@ -15,23 +15,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from ryu.app.client import OFPClient
-
-from nova import flags
-from nova.network import linux_net
-from nova.openstack.common import cfg
-from nova.openstack.common import log as logging
 from nova import utils
+from nova.network import linux_net
+from nova.network.linux_net import FLAGS
+from nova.openstack.common import log as logging
+
+from quantumclient.v2_0 import client
 
 
 LOG = logging.getLogger(__name__)
-
-ryu_linux_net_opt = cfg.StrOpt('linuxnet_ovs_ryu_api_host',
-                               default='127.0.0.1:8080',
-                               help='Openflow Ryu REST API host:port')
-
-FLAGS = flags.FLAGS
-FLAGS.register_opt(ryu_linux_net_opt)
 
 
 def _get_datapath_id(bridge_name):
@@ -49,12 +41,11 @@ def _get_port_no(dev):
 class LinuxOVSRyuInterfaceDriver(linux_net.LinuxOVSInterfaceDriver):
     def __init__(self):
         super(LinuxOVSRyuInterfaceDriver, self).__init__()
-
-        LOG.debug('ryu rest host %s', FLAGS.linuxnet_ovs_ryu_api_host)
-        self.ryu_client = OFPClient(FLAGS.linuxnet_ovs_ryu_api_host)
+        self.client = client.Client(endpoint_url=FLAGS.quantum_url,
+                                    auth_strategy=None,
+                                    timeout=FLAGS.quantum_url_timeout)
         self.datapath_id = _get_datapath_id(
             FLAGS.linuxnet_ovs_integration_bridge)
-
         if linux_net.binary_name == 'nova-network':
             for tables in [linux_net.iptables_manager.ipv4,
                            linux_net.iptables_manager.ipv6]:
@@ -63,12 +54,26 @@ class LinuxOVSRyuInterfaceDriver(linux_net.LinuxOVSInterfaceDriver):
                     '--in-interface gw-+ --out-interface gw-+ -j DROP')
             linux_net.iptables_manager.apply()
 
-    def plug(self, network, mac_address, gateway=True):
-        LOG.debug("network %s mac_adress %s gateway %s",
-                  network, mac_address, gateway)
-        ret = super(LinuxOVSRyuInterfaceDriver, self).plug(
-            network, mac_address, gateway)
+    def _set_port_state(self, network, mac_address, body):
+        tenant_id = network['net_tenant_id']
+        net_id = network['uuid']
+        search_opts = {'tenant_id': tenant_id,
+                       'network_id': net_id,
+                       'mac_address': mac_address}
+        data = self.client.list_ports(**search_opts)
+        ports = data.get('ports', [])
+        self.client.update_port(ports[0]['id'], body)
 
-        port_no = _get_port_no(self.get_dev(network))
-        self.ryu_client.create_port(network['uuid'], self.datapath_id, port_no)
+    def plug(self, network, mac_address, gateway=True):
+        ret = super(LinuxOVSRyuInterfaceDriver, self).plug(
+            network, mac_address, True)
+        dev = self.get_dev(network)
+        port_data = {
+            'state': 'ACTIVE',
+            'datapath_id': self.datapath_id,
+            'port_no': _get_port_no(dev),
+        }
+        body = {'port': port_data}
+        self._set_port_state(network, mac_address, body)
+
         return ret
