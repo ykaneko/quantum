@@ -19,20 +19,21 @@
 from ryu.app import client
 from ryu.app import rest_nw_id
 
+from quantum.common import constants as q_const
 from quantum.common import exceptions as q_exc
 from quantum.common import topics
 from quantum.db import api as db
 from quantum.db import db_base_plugin_v2
+from quantum.db.dhcp_rpc_base import DhcpRpcCallbackMixin
 from quantum.db import l3_db
 from quantum.db import models_v2
-from quantum.db.dhcp_rpc_base import DhcpRpcCallbackMixin
 from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
 from quantum.openstack.common.rpc import dispatcher
-from quantum.plugins.ryu import ofp_service_type
 from quantum.plugins.ryu.common import config
 from quantum.plugins.ryu.db import api_v2 as db_api_v2
+from quantum.plugins.ryu import ofp_service_type
 
 
 LOG = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ class RyuQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         ofp_api_host = cfg.CONF.OVS.openflow_rest_api
 
         if ofp_con_host is None or ofp_api_host is None:
-            raise q_exc.Invalid("invalid configuration. check ryu.ini")
+            raise q_exc.Invalid(_('invalid configuration. check ryu.ini'))
 
         hosts = [(ofp_con_host, ofp_service_type.CONTROLLER),
                  (ofp_api_host, ofp_service_type.REST_API)]
