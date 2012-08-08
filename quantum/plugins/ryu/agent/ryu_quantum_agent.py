@@ -36,7 +36,8 @@ from ryu.app import rest_nw_id
 
 from quantum.agent.linux import ovs_lib
 from quantum.agent.linux.ovs_lib import VifPort
-from quantum.openstack.common.cfg import NoSuchOptError, NoSuchGroupError
+from quantum.common import config as logging_config
+from quantum.openstack.common import cfg
 from quantum.plugins.ryu.common import config
 
 
@@ -65,7 +66,7 @@ def _get_ip(conf):
     ip = None
     try:
         ip = conf.OVS.tunnel_ip
-    except (NoSuchOptError, NoSuchGroupError):
+    except (cfg.NoSuchOptError, cfg.NoSuchGroupError):
         pass
     if ip:
         return ip
@@ -73,7 +74,7 @@ def _get_ip(conf):
     iface = None
     try:
         iface = conf.OVS.physical_interface
-    except (NoSuchOptError, NoSuchGroupError):
+    except (cfg.NoSuchOptError, cfg.NoSuchGroupError):
         pass
     if iface:
         iface = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
@@ -449,7 +450,7 @@ class OVSQuantumOFPRyuAgent(object):
         self.int_br.find_datapath_id()
 
         ryu_rest_client = client.OFPClient(ofp_rest_api_addr)
-        gt_client = client.GRETunnelClient(ofp_rest_api_addr)
+        gt_client = client.TunnelClient(ofp_rest_api_addr)
 
         self.gre_ports = GREPortSet(self.int_br, self.db, tunnel_ip,
                                     ryu_rest_client, gt_client)
@@ -471,35 +472,21 @@ class OVSQuantumOFPRyuAgent(object):
 
 
 def main():
-    usagestr = "%prog [OPTIONS] <config file>"
-    parser = OptionParser(usage=usagestr)
-    parser.add_option("-v", "--verbose", dest="verbose",
-                      action="store_true", default=False,
-                      help="turn on verbose logging")
+    cfg.CONF(args=sys.argv, project='quantum')
 
-    options, args = parser.parse_args()
+    # (TODO) gary - swap with common logging
+    logging_config.setup_logging(cfg.CONF)
 
-    if options.verbose:
-        LOG.basicConfig(level=LOG.DEBUG)
-    else:
-        LOG.basicConfig(level=LOG.WARN)
-
-    if len(args) != 1:
-        parser.print_help()
-        sys.exit(1)
-
-    config_file = args[0]
-    conf = config.parse(config_file)
-    integ_br = conf.OVS.integration_bridge
-    root_helper = conf.AGENT.root_helper
-    target_v2_api = conf.AGENT.target_v2_api
-    options = {"sql_connection": conf.DATABASE.sql_connection}
+    integ_br = cfg.CONF.OVS.integration_bridge
+    root_helper = cfg.CONF.AGENT.root_helper
+    target_v2_api = cfg.CONF.AGENT.target_v2_api
+    options = {"sql_connection": cfg.CONF.DATABASE.sql_connection}
     db = SqlSoup(options["sql_connection"])
 
     LOG.info("Connecting to database \"%s\" on %s",
              db.engine.url.database, db.engine.url.host)
 
-    tunnel_ip = _get_ip(conf)
+    tunnel_ip = _get_ip(cfg.CONF)
     LOG.debug('tunnel_ip %s', tunnel_ip)
 
     plugin = OVSQuantumOFPRyuAgent(integ_br, db, tunnel_ip, root_helper,
