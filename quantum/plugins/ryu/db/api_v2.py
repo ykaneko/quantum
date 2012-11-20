@@ -182,3 +182,13 @@ class TunnelKey(object):
     def all_list(self):
         session = db.get_session()
         return session.query(ryu_models_v2.TunnelKey).all()
+
+
+def set_port_status(session, port_id, status):
+    try:
+        port = session.query(models_v2.Port).filter_by(id=port_id).one()
+        port['status'] = status
+        session.merge(port)
+        session.flush()
+    except orm_exc.NoResultFound:
+        raise q_exc.PortNotFound(port_id=port_id, net_id=None)
