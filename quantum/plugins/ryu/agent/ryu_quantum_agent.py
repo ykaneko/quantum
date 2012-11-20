@@ -32,8 +32,60 @@ from quantum.agent.linux.ovs_lib import VifPort
 from quantum.common import config as logging_config
 from quantum.common import constants
 from quantum.openstack.common import cfg
-from quantum.openstack.common import log as LOG
+from quantum.openstack.common.cfg import NoSuchGroupError
+from quantum.openstack.common.cfg import NoSuchOptError
+from quantum.openstack.common import log
 from quantum.plugins.ryu.common import config
+
+
+LOG = log.getLogger(__name__)
+
+
+# This is copied of nova.flags._get_my_ip()
+# Agent shouldn't depend on nova module
+def _get_my_ip():
+    """
+    Returns the actual ip of the local machine.
+
+    This code figures out what source address would be used if some traffic
+    were to be sent out to some well known address on the Internet. In this
+    case, a Google DNS server is used, but the specific address does not
+    matter much.  No traffic is actually sent.
+    """
+    csock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    csock.connect(('8.8.8.8', 80))
+    (addr, _port) = csock.getsockname()
+    csock.close()
+    return addr
+
+
+def _get_ip(cfg_ip_str, cfg_interface_str):
+    ip = None
+    try:
+        ip = getattr(cfg.CONF.OVS, cfg_ip_str)
+    except (NoSuchOptError, NoSuchGroupError):
+        pass
+    if ip:
+        return ip
+
+    iface = None
+    try:
+        iface = getattr(cfg.CONF.OVS, cfg_interface_str)
+    except (NoSuchOptError, NoSuchGroupError):
+        pass
+    if iface:
+        iface = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
+        return iface['addr']
+
+    return _get_my_ip()
+
+
+def _get_tunnel_ip():
+    return _get_ip('tunnel_ip', 'tunnel_interface')
+
+
+def _get_ovsdb_ip():
+    return _get_ip('ovsdb_ip', 'ovsdb_interface')
 
 
 class OVSBridge(ovs_lib.OVSBridge):

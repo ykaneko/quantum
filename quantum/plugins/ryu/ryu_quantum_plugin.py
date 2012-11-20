@@ -18,7 +18,6 @@
 
 from ryu.app import client
 from ryu.app import rest_nw_id
-from sqlalchemy.orm import exc as sql_exc
 
 from quantum.common import exceptions as q_exc
 from quantum.common import topics
@@ -65,6 +64,7 @@ class RyuQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
 
         self.client = client.OFPClient(ofp_api_host)
         self.tun_client = client.TunnelClient(ofp_api_host)
+        self.iface_client = client.QuantumIfaceClient(ofp_api_host)
         for nw_id in rest_nw_id.RESERVED_NETWORK_IDS:
             if nw_id != rest_nw_id.NW_ID_UNKNOWN:
                 self.client.update_network(nw_id)
@@ -85,6 +85,9 @@ class RyuQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
             self.client.update_network(net.id)
         for tun in self.tunnel_key.all_list():
             self.tun_client.update_tunnel_key(tun.network_id, tun.tunnel_key)
+        session = db.get_session()
+        for port in session.query(models_v2.Port).all():
+            self.iface_client.update_network_id(port.id, port.network_id)
 
     def _client_create_network(self, net_id, tunnel_key):
         self.client.create_network(net_id)
@@ -143,6 +146,11 @@ class RyuQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
 
         return [self._fields(net, fields) for net in nets]
 
+    def create_port(self, context, port):
+        port = super(RyuQuantumPluginV2, self).create_port(context, port)
+        self.iface_client.create_network_id(port['id'], port['network_id'])
+        return port
+
     def delete_port(self, context, id, l3_port_check=True):
         # if needed, check to see if this is a port owned by
         # and l3-router. If so, we should prevent deletion.
@@ -150,3 +158,11 @@ class RyuQuantumPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
             self.prevent_l3_port_deletion(context, id)
         self.disassociate_floatingips(context, id)
         return super(RyuQuantumPluginV2, self).delete_port(context, id)
+
+    def update_port(self, context, id, port):
+        deleted = port['port'].get('deleted', False)
+        port = super(RyuQuantumPluginV2, self).update_port(context, id, port)
+        if deleted:
+            session = context.session
+            db_api_v2.set_port_status(session, id, q_const.PORT_STATUS_DOWN)
+        return port
