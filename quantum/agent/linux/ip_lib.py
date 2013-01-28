@@ -95,6 +95,10 @@ class IPWrapper(SubProcessBase):
         return (IPDevice(name1, self.root_helper, self.namespace),
                 IPDevice(name2, self.root_helper, self.namespace))
 
+    def add_dummy(self, name):
+        self._as_root('', 'link', ('add', name, 'type', 'dummy'))
+        return IPDevice(name, self.root_helper, self.namespace)
+
     def ensure_namespace(self, name):
         if not self.netns.exists(name):
             ip = self.netns.add(name)
