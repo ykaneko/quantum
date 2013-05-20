@@ -1,7 +1,7 @@
 
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation.
 # Copyright 2011 Justin Santa Barbara
 # All Rights Reserved.
 #
@@ -21,15 +21,15 @@ from abc import ABCMeta
 import imp
 import os
 
+from oslo.config import cfg
 import routes
 import webob.dec
 import webob.exc
 
+from quantum.api.v2 import attributes
 from quantum.common import exceptions
 import quantum.extensions
 from quantum.manager import QuantumManager
-from quantum.openstack.common import cfg
-from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum import wsgi
 
@@ -42,7 +42,8 @@ class PluginInterface(object):
 
     @classmethod
     def __subclasshook__(cls, klass):
-        """
+        """Checking plugin class.
+
         The __subclasshook__ method is a class method
         that will be called everytime a class is tested
         using issubclass(klass, PluginInterface).
@@ -134,7 +135,7 @@ class ExtensionDescriptor(object):
         return request_exts
 
     def get_extended_resources(self, version):
-        """retrieve extended resources or attributes for core resources.
+        """Retrieve extended resources or attributes for core resources.
 
         Extended attributes are implemented by a core plugin similarly
         to the attributes defined in the core, and can appear in
@@ -151,12 +152,32 @@ class ExtensionDescriptor(object):
         return {}
 
     def get_plugin_interface(self):
-        """
-        Returns an abstract class which defines contract for the plugin.
+        """Returns an abstract class which defines contract for the plugin.
+
         The abstract class should inherit from extesnions.PluginInterface,
         Methods in this abstract class  should be decorated as abstractmethod
         """
         return None
+
+    def update_attributes_map(self, extended_attributes,
+                              extension_attrs_map=None):
+        """Update attributes map for this extension.
+
+        This is default method for extending an extension's attributes map.
+        An extension can use this method and supplying its own resource
+        attribute map in extension_attrs_map argument to extend all its
+        attributes that needs to be extended.
+
+        If an extension does not implement update_attributes_map, the method
+        does nothing and just return.
+        """
+        if not extension_attrs_map:
+            return
+
+        for resource, attrs in extension_attrs_map.iteritems():
+            extended_attrs = extended_attributes.get(resource)
+            if extended_attrs:
+                attrs.update(extended_attrs)
 
 
 class ActionExtensionController(wsgi.Controller):
@@ -302,7 +323,7 @@ class ExtensionMiddleware(wsgi.Middleware):
         """Return a dict of ActionExtensionController-s by collection."""
         action_controllers = {}
         for action in ext_mgr.get_actions():
-            if not action.collection in action_controllers.keys():
+            if action.collection not in action_controllers.keys():
                 controller = ActionExtensionController(application)
                 mapper.connect("/%s/:(id)/action.:(format)" %
                                action.collection,
@@ -321,7 +342,7 @@ class ExtensionMiddleware(wsgi.Middleware):
         """Returns a dict of RequestExtensionController-s by collection."""
         request_ext_controllers = {}
         for req_ext in ext_mgr.get_request_extensions():
-            if not req_ext.key in request_ext_controllers.keys():
+            if req_ext.key not in request_ext_controllers.keys():
                 controller = RequestExtensionController(application)
                 mapper.connect(req_ext.url_route + '.:(format)',
                                action='process',
@@ -426,9 +447,12 @@ class ExtensionManager(object):
         After this function, we will extend the attr_map if an extension
         wants to extend this map.
         """
+        update_exts = []
         for ext in self.extensions.itervalues():
             if not hasattr(ext, 'get_extended_resources'):
                 continue
+            if hasattr(ext, 'update_attributes_map'):
+                update_exts.append(ext)
             try:
                 extended_attrs = ext.get_extended_resources(version)
                 for resource, resource_attrs in extended_attrs.iteritems():
@@ -436,9 +460,15 @@ class ExtensionManager(object):
                         attr_map[resource].update(resource_attrs)
                     else:
                         attr_map[resource] = resource_attrs
+                if extended_attrs:
+                    attributes.EXT_NSES[ext.get_alias()] = ext.get_namespace()
             except AttributeError:
                 LOG.exception(_("Error fetching extended attributes for "
                                 "extension '%s'"), ext.get_name())
+
+        """Extending extensions' attributes map."""
+        for ext in update_exts:
+            ext.update_attributes_map(attr_map)
 
     def _check_extension(self, extension):
         """Checks for required methods in extension objects."""
@@ -454,7 +484,7 @@ class ExtensionManager(object):
         if hasattr(extension, 'check_env'):
             try:
                 extension.check_env()
-            except exceptions.InvalidExtenstionEnv as ex:
+            except exceptions.InvalidExtensionEnv as ex:
                 LOG.warn(_("Exception loading extension: %s"), unicode(ex))
                 return False
         return True
@@ -497,7 +527,7 @@ class ExtensionManager(object):
                     self.add_extension(new_ext)
             except Exception as exception:
                 LOG.warn(_("Extension file %(f)s wasn't loaded due to "
-                           "%(exception)s"), locals())
+                           "%(exception)s"), {'f': f, 'exception': exception})
 
     def add_extension(self, ext):
         # Do nothing if the extension doesn't check out
@@ -523,7 +553,8 @@ class PluginAwareExtensionManager(ExtensionManager):
 
     def _check_extension(self, extension):
         """Checks if any of plugins supports extension and implements the
-        extension contract."""
+        extension contract.
+        """
         extension_is_valid = super(PluginAwareExtensionManager,
                                    self)._check_extension(extension)
         return (extension_is_valid and
@@ -536,7 +567,6 @@ class PluginAwareExtensionManager(ExtensionManager):
                                           "supported_extension_aliases") and
                                   alias in plugin.supported_extension_aliases)
                                  for plugin in self.plugins.values())
-        plugin_provider = cfg.CONF.core_plugin
         if not supports_extension:
             LOG.warn(_("Extension %s not supported by any of loaded plugins"),
                      alias)
@@ -588,13 +618,14 @@ class ResourceExtension(object):
     """Add top level resources to the OpenStack API in Quantum."""
 
     def __init__(self, collection, controller, parent=None, path_prefix="",
-                 collection_actions={}, member_actions={}):
+                 collection_actions={}, member_actions={}, attr_map={}):
         self.collection = collection
         self.controller = controller
         self.parent = parent
         self.collection_actions = collection_actions
         self.member_actions = member_actions
         self.path_prefix = path_prefix
+        self.attr_map = attr_map
 
 
 # Returns the extention paths from a config entry and the __path__

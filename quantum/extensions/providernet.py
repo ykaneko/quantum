@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,26 +18,24 @@
 from quantum.api import extensions
 from quantum.api.v2 import attributes
 
-
 NETWORK_TYPE = 'provider:network_type'
 PHYSICAL_NETWORK = 'provider:physical_network'
 SEGMENTATION_ID = 'provider:segmentation_id'
 
-# TODO(salvatore-orlando): Devise a solution for allowing plugins
-# to alter the set of allowed values
-NETWORK_TYPE_VALUES = ['flat', 'gre', 'local', 'vlan', 'stt']
-
 EXTENDED_ATTRIBUTES_2_0 = {
     'networks': {
         NETWORK_TYPE: {'allow_post': True, 'allow_put': True,
-                       'validate': {'type:values': NETWORK_TYPE_VALUES},
+                       'validate': {'type:string': None},
                        'default': attributes.ATTR_NOT_SPECIFIED,
+                       'enforce_policy': True,
                        'is_visible': True},
         PHYSICAL_NETWORK: {'allow_post': True, 'allow_put': True,
                            'default': attributes.ATTR_NOT_SPECIFIED,
+                           'enforce_policy': True,
                            'is_visible': True},
         SEGMENTATION_ID: {'allow_post': True, 'allow_put': True,
                           'convert_to': int,
+                          'enforce_policy': True,
                           'default': attributes.ATTR_NOT_SPECIFIED,
                           'is_visible': True},
     }

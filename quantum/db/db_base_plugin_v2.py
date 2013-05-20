@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,6 +19,7 @@ import datetime
 import random
 
 import netaddr
+from oslo.config import cfg
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
 
@@ -27,7 +28,7 @@ from quantum.common import constants
 from quantum.common import exceptions as q_exc
 from quantum.db import api as db
 from quantum.db import models_v2
-from quantum.openstack.common import cfg
+from quantum.db import sqlalchemyutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import timeutils
 from quantum.openstack.common import uuidutils
@@ -45,28 +46,34 @@ AGENT_OWNER_PREFIX = 'network:'
 # finds out that all existing IP Allocations are associated with ports
 # with these owners, it will allow subnet deletion to proceed with the
 # IP allocations being cleaned up by cascade.
-AUTO_DELETE_PORT_OWNERS = ['network:dhcp', 'network:router_interface']
+AUTO_DELETE_PORT_OWNERS = ['network:dhcp']
 
 
 class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
-    """ A class that implements the v2 Quantum plugin interface
-        using SQLAlchemy models.  Whenever a non-read call happens
-        the plugin will call an event handler class method (e.g.,
-        network_created()).  The result is that this class can be
-        sub-classed by other classes that add custom behaviors on
-        certain events.
+    """V2 Quantum plugin interface implementation using SQLAlchemy models.
+
+    Whenever a non-read call happens the plugin will call an event handler
+    class method (e.g., network_created()).  The result is that this class
+    can be sub-classed by other classes that add custom behaviors on certain
+    events.
     """
 
     # This attribute specifies whether the plugin supports or not
-    # bulk operations. Name mangling is used in order to ensure it
-    # is qualified by class
+    # bulk/pagination/sorting operations. Name mangling is used in
+    # order to ensure it is qualified by class
     __native_bulk_support = True
+    __native_pagination_support = True
+    __native_sorting_support = True
     # Plugins, mixin classes implementing extension will register
     # hooks into the dict below for "augmenting" the "core way" of
     # building a query for retrieving objects from a model class.
     # To this aim, the register_model_query_hook and unregister_query_hook
     # from this class should be invoked
     _model_query_hooks = {}
+    # This dictionary will store methods for extending attributes of
+    # api resources. Mixins can use this dict for adding their own methods
+    # TODO(salvatore-orlando): Avoid using class-level variables
+    _dict_extend_functions = {}
 
     def __init__(self):
         # NOTE(jkoelker) This is an incomlete implementation. Subclasses
@@ -95,7 +102,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         if not context.is_admin and hasattr(model, 'tenant_id'):
             if hasattr(model, 'shared'):
                 query_filter = ((model.tenant_id == context.tenant_id) |
-                                (model.shared))
+                                (model.shared == True))
             else:
                 query_filter = (model.tenant_id == context.tenant_id)
         # Execute query hooks registered from mixins and plugins
@@ -115,8 +122,15 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         return query
 
     @classmethod
-    def register_model_query_hook(cls, model, name, query_hook, filter_hook):
-        """ register an hook to be invoked when a query is executed.
+    def register_dict_extend_funcs(cls, resource, funcs):
+        cur_funcs = cls._dict_extend_functions.get(resource, [])
+        cur_funcs.extend(funcs)
+        cls._dict_extend_functions[resource] = cur_funcs
+
+    @classmethod
+    def register_model_query_hook(cls, model, name, query_hook, filter_hook,
+                                  result_filters=None):
+        """Register a hook to be invoked when a query is executed.
 
         Add the hooks to the _model_query_hooks dict. Models are the keys
         of this dict, whereas the value is another dict mapping hook names to
@@ -135,7 +149,16 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             # add key to dict
             model_hooks = {}
             cls._model_query_hooks[model] = model_hooks
-        model_hooks[name] = {'query': query_hook, 'filter': filter_hook}
+        model_hooks[name] = {'query': query_hook, 'filter': filter_hook,
+                             'result_filters': result_filters}
+
+    def _filter_non_model_columns(self, data, model):
+        """Remove all the attributes from data which are not columns of
+        the model passed as second parameter.
+        """
+        columns = [c.name for c in model.__table__.columns]
+        return dict((k, v) for (k, v) in
+                    data.iteritems() if k in columns)
 
     def _get_by_id(self, context, model, id):
         query = self._model_query(context, model)
@@ -174,14 +197,11 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         return port
 
     def _get_dns_by_subnet(self, context, subnet_id):
-        try:
-            dns_qry = context.session.query(models_v2.DNSNameServer)
-            return dns_qry.filter_by(subnet_id=subnet_id).all()
-        except exc.NoResultFound:
-            return []
+        dns_qry = context.session.query(models_v2.DNSNameServer)
+        return dns_qry.filter_by(subnet_id=subnet_id).all()
 
     def _get_route_by_subnet(self, context, subnet_id):
-        route_qry = context.session.query(models_v2.Route)
+        route_qry = context.session.query(models_v2.SubnetRoute)
         return route_qry.filter_by(subnet_id=subnet_id).all()
 
     def _get_subnets_by_network(self, context, network_id):
@@ -205,17 +225,37 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                 column = getattr(model, key, None)
                 if column:
                     query = query.filter(column.in_(value))
+            for _name, hooks in self._model_query_hooks.get(model,
+                                                            {}).iteritems():
+                result_filter = hooks.get('result_filters', None)
+                if result_filter:
+                    query = result_filter(self, query, filters)
         return query
 
-    def _get_collection_query(self, context, model, filters=None):
+    def _get_collection_query(self, context, model, filters=None,
+                              sorts=None, limit=None, marker_obj=None,
+                              page_reverse=False):
         collection = self._model_query(context, model)
         collection = self._apply_filters_to_query(collection, model, filters)
+        if limit and page_reverse and sorts:
+            sorts = [(s[0], not s[1]) for s in sorts]
+        collection = sqlalchemyutils.paginate_query(collection, model, limit,
+                                                    sorts,
+                                                    marker_obj=marker_obj)
         return collection
 
     def _get_collection(self, context, model, dict_func, filters=None,
-                        fields=None):
-        query = self._get_collection_query(context, model, filters)
-        return [dict_func(c, fields) for c in query.all()]
+                        fields=None, sorts=None, limit=None, marker_obj=None,
+                        page_reverse=False):
+        query = self._get_collection_query(context, model, filters=filters,
+                                           sorts=sorts,
+                                           limit=limit,
+                                           marker_obj=marker_obj,
+                                           page_reverse=page_reverse)
+        items = [dict_func(c, fields) for c in query]
+        if limit and page_reverse:
+            items.reverse()
+        return items
 
     def _get_collection_count(self, context, model, filters=None):
         return self._get_collection_query(context, model, filters).count()
@@ -234,7 +274,9 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             if QuantumDbPluginV2._check_unique_mac(context, network_id,
                                                    mac_address):
                 LOG.debug(_("Generated mac for network %(network_id)s "
-                            "is %(mac_address)s"), locals())
+                            "is %(mac_address)s"),
+                          {'network_id': network_id,
+                           'mac_address': mac_address})
                 return mac_address
             else:
                 LOG.debug(_("Generated mac %(mac_address)s exists. Remaining "
@@ -257,7 +299,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
 
     @staticmethod
     def _hold_ip(context, network_id, subnet_id, port_id, ip_address):
-        alloc_qry = context.session.query(models_v2.IPAllocation)
+        alloc_qry = context.session.query(
+            models_v2.IPAllocation).with_lockmode('update')
         allocated = alloc_qry.filter_by(network_id=network_id,
                                         port_id=port_id,
                                         ip_address=ip_address,
@@ -272,7 +315,10 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         else:
             LOG.debug(_("Hold allocated IP %(ip_address)s "
                         "(%(network_id)s/%(subnet_id)s/%(port_id)s)"),
-                      locals())
+                      {'ip_address': ip_address,
+                       'network_id': network_id,
+                       'subnet_id': subnet_id,
+                       'port_id': port_id})
             allocated.port_id = None
 
     @staticmethod
@@ -281,13 +327,14 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         if network_id in getattr(context, '_recycled_networks', set()):
             return
 
-        expired_qry = context.session.query(models_v2.IPAllocation)
+        expired_qry = context.session.query(
+            models_v2.IPAllocation).with_lockmode('update')
         expired_qry = expired_qry.filter_by(network_id=network_id,
                                             port_id=None)
         expired_qry = expired_qry.filter(
             models_v2.IPAllocation.expiration <= timeutils.utcnow())
 
-        for expired in expired_qry.all():
+        for expired in expired_qry:
             QuantumDbPluginV2._recycle_ip(context,
                                           network_id,
                                           expired['subnet_id'],
@@ -304,8 +351,9 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         subnet.
         """
         # Grab all allocation pools for the subnet
-        pool_qry = context.session.query(models_v2.IPAllocationPool)
-        allocation_pools = pool_qry.filter_by(subnet_id=subnet_id).all()
+        pool_qry = context.session.query(
+            models_v2.IPAllocationPool).with_lockmode('update')
+        allocation_pools = pool_qry.filter_by(subnet_id=subnet_id)
         # Find the allocation pool for the IP to recycle
         pool_id = None
         for allocation_pool in allocation_pools:
@@ -325,7 +373,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         # If 1 of the above holds true then the specific entry will be
         # modified. If both hold true then the two ranges will be merged.
         # If there are no entries then a single entry will be added.
-        range_qry = context.session.query(models_v2.IPAvailabilityRange)
+        range_qry = context.session.query(
+            models_v2.IPAvailabilityRange).with_lockmode('update')
         ip_first = str(netaddr.IPAddress(ip_address) + 1)
         ip_last = str(netaddr.IPAddress(ip_address) - 1)
         LOG.debug(_("Recycle %s"), ip_address)
@@ -394,23 +443,29 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         query = query.filter_by(network_id=network_id, ip_address=ip_address)
 
         try:
-            fixed_ip = query.one()
-            fixed_ip.expiration = expiration
+            with context.session.begin(subtransactions=True):
+                fixed_ip = query.one()
+                fixed_ip.expiration = expiration
         except exc.NoResultFound:
             LOG.debug(_("No fixed IP found that matches the network "
                         "%(network_id)s and ip address %(ip_address)s."),
-                      locals())
+                      {'network_id': network_id,
+                       'ip_address': ip_address})
 
     @staticmethod
     def _delete_ip_allocation(context, network_id, subnet_id, ip_address):
 
         # Delete the IP address from the IPAllocate table
         LOG.debug(_("Delete allocated IP %(ip_address)s "
-                    "(%(network_id)s/%(subnet_id)s)"), locals())
-        alloc_qry = context.session.query(models_v2.IPAllocation)
-        allocated = alloc_qry.filter_by(network_id=network_id,
-                                        ip_address=ip_address,
-                                        subnet_id=subnet_id).delete()
+                    "(%(network_id)s/%(subnet_id)s)"),
+                  {'ip_address': ip_address,
+                   'network_id': network_id,
+                   'subnet_id': subnet_id})
+        alloc_qry = context.session.query(
+            models_v2.IPAllocation).with_lockmode('update')
+        alloc_qry.filter_by(network_id=network_id,
+                            ip_address=ip_address,
+                            subnet_id=subnet_id).delete()
 
     @staticmethod
     def _generate_ip(context, subnets):
@@ -421,7 +476,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         """
         range_qry = context.session.query(
             models_v2.IPAvailabilityRange).join(
-                models_v2.IPAllocationPool)
+                models_v2.IPAllocationPool).with_lockmode('update')
         for subnet in subnets:
             range = range_qry.filter_by(subnet_id=subnet['id']).first()
             if not range:
@@ -453,8 +508,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         range_qry = context.session.query(
             models_v2.IPAvailabilityRange,
             models_v2.IPAllocationPool).join(
-                models_v2.IPAllocationPool)
-        results = range_qry.filter_by(subnet_id=subnet_id).all()
+                models_v2.IPAllocationPool).with_lockmode('update')
+        results = range_qry.filter_by(subnet_id=subnet_id)
         for (range, pool) in results:
             first = int(netaddr.IPAddress(range['first_ip']))
             last = int(netaddr.IPAddress(range['last_ip']))
@@ -520,7 +575,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
 
         # Check if the requested IP is in a defined allocation pool
         pool_qry = context.session.query(models_v2.IPAllocationPool)
-        allocation_pools = pool_qry.filter_by(subnet_id=subnet_id).all()
+        allocation_pools = pool_qry.filter_by(subnet_id=subnet_id)
         ip = netaddr.IPAddress(ip_address)
         for allocation_pool in allocation_pools:
             allocation_pool_range = netaddr.IPRange(
@@ -590,6 +645,9 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                                      'ip_address': fixed['ip_address']})
             else:
                 fixed_ip_set.append({'subnet_id': subnet_id})
+        if len(fixed_ip_set) > cfg.CONF.max_fixed_ips_per_port:
+            msg = _('Exceeded maximim amount of fixed ips per port')
+            raise q_exc.InvalidInput(error_message=msg)
         return fixed_ip_set
 
     def _allocate_fixed_ips(self, context, network, fixed_ips):
@@ -617,15 +675,18 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         """Add or remove IPs from the port."""
         ips = []
 
+        # the new_ips contain all of the fixed_ips that are to be updated
+        if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
+            msg = _('Exceeded maximim amount of fixed ips per port')
+            raise q_exc.InvalidInput(error_message=msg)
+
         # Remove all of the intersecting elements
         for original_ip in original_ips[:]:
             for new_ip in new_ips[:]:
-                if 'ip_address' in new_ip:
-                    if (original_ip['ip_address'] == new_ip['ip_address']
-                            and
-                            original_ip['subnet_id'] == new_ip['subnet_id']):
-                        original_ips.remove(original_ip)
-                        new_ips.remove(new_ip)
+                if ('ip_address' in new_ip and
+                    original_ip['ip_address'] == new_ip['ip_address']):
+                    original_ips.remove(original_ip)
+                    new_ips.remove(new_ip)
 
         # Check if the IP's to add are OK
         to_add = self._test_fixed_ips_for_port(context, network_id, new_ips)
@@ -684,11 +745,11 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         Verifies the specified CIDR does not overlap with the ones defined
         for the other subnets specified for this network, or with any other
         CIDR if overlapping IPs are disabled.
-
         """
         new_subnet_ipset = netaddr.IPSet([new_subnet_cidr])
-        subnet_list = network.subnets
-        if not cfg.CONF.allow_overlapping_ips:
+        if cfg.CONF.allow_overlapping_ips:
+            subnet_list = network.subnets
+        else:
             subnet_list = self._get_all_subnets(context)
         for subnet in subnet_list:
             if (netaddr.IPSet([subnet.cidr]) & new_subnet_ipset):
@@ -706,17 +767,14 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                            'cidr': subnet.cidr})
                 raise q_exc.InvalidInput(error_message=err_msg)
 
-    def _validate_allocation_pools(self, ip_pools, gateway_ip, subnet_cidr):
+    def _validate_allocation_pools(self, ip_pools, subnet_cidr):
         """Validate IP allocation pools.
 
         Verify start and end address for each allocation pool are valid,
         ie: constituted by valid and appropriately ordered IP addresses.
-        Also, verify pools do not overlap among themselves and with the
-        gateway IP. Finally, verify that each range, and the gateway IP,
-        fall within the subnet's CIDR.
-
+        Also, verify pools do not overlap among themselves.
+        Finally, verify that each range fall within the subnet's CIDR.
         """
-
         subnet = netaddr.IPNetwork(subnet_cidr)
         subnet_first_ip = netaddr.IPAddress(subnet.first + 1)
         subnet_last_ip = netaddr.IPAddress(subnet.last - 1)
@@ -760,10 +818,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         LOG.debug(_("Checking for overlaps among allocation pools "
                     "and gateway ip"))
         ip_ranges = ip_pools[:]
-        # Treat gw as IPset as well
-        if gateway_ip:
-            ip_ranges.append(gateway_ip)
-            ip_sets.append(netaddr.IPSet([gateway_ip]))
+
         # Use integer cursors as an efficient way for implementing
         # comparison and avoiding comparing the same pair twice
         for l_cursor in range(len(ip_sets)):
@@ -772,7 +827,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                     l_range = ip_ranges[l_cursor]
                     r_range = ip_ranges[r_cursor]
                     LOG.error(_("Found overlapping ranges: %(l_range)s and "
-                                "%(r_range)s"), locals())
+                                "%(r_range)s"),
+                              {'l_range': l_range, 'r_range': r_range})
                     raise q_exc.OverlappingAllocationPools(
                         pool_1=l_range,
                         pool_2=r_range,
@@ -799,34 +855,25 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         Pools are defined by the 'allocation_pools' attribute,
         a list of dict objects with 'start' and 'end' keys for
         defining the pool range.
-
         """
-
         pools = []
-        if subnet['allocation_pools'] is attributes.ATTR_NOT_SPECIFIED:
-            # Auto allocate the pool around gateway_ip
-            net = netaddr.IPNetwork(subnet['cidr'])
-            first_ip = net.first + 1
-            last_ip = net.last - 1
-            gw_ip = int(netaddr.IPAddress(subnet['gateway_ip'] or net.last))
-            # Use the gw_ip to find a point for splitting allocation pools
-            # for this subnet
-            split_ip = min(max(gw_ip, net.first), net.last)
-            if split_ip > first_ip:
-                pools.append({'start': str(netaddr.IPAddress(first_ip)),
-                              'end': str(netaddr.IPAddress(split_ip - 1))})
-            if split_ip < last_ip:
-                pools.append({'start': str(netaddr.IPAddress(split_ip + 1)),
-                              'end': str(netaddr.IPAddress(last_ip))})
-            # return auto-generated pools
-            # no need to check for their validity
-            return pools
-        else:
-            pools = subnet['allocation_pools']
-            self._validate_allocation_pools(pools,
-                                            subnet['gateway_ip'],
-                                            subnet['cidr'])
-            return pools
+        # Auto allocate the pool around gateway_ip
+        net = netaddr.IPNetwork(subnet['cidr'])
+        first_ip = net.first + 1
+        last_ip = net.last - 1
+        gw_ip = int(netaddr.IPAddress(subnet['gateway_ip'] or net.last))
+        # Use the gw_ip to find a point for splitting allocation pools
+        # for this subnet
+        split_ip = min(max(gw_ip, net.first), net.last)
+        if split_ip > first_ip:
+            pools.append({'start': str(netaddr.IPAddress(first_ip)),
+                          'end': str(netaddr.IPAddress(split_ip - 1))})
+        if split_ip < last_ip:
+            pools.append({'start': str(netaddr.IPAddress(split_ip + 1)),
+                          'end': str(netaddr.IPAddress(last_ip))})
+        # return auto-generated pools
+        # no need to check for their validity
+        return pools
 
     def _validate_shared_update(self, context, id, original, updated):
         # The only case that needs to be validated is when 'shared'
@@ -835,10 +882,10 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             return
         ports = self._model_query(
             context, models_v2.Port).filter(
-                models_v2.Port.network_id == id).all()
+                models_v2.Port.network_id == id)
         subnets = self._model_query(
             context, models_v2.Subnet).filter(
-                models_v2.Subnet.network_id == id).all()
+                models_v2.Subnet.network_id == id)
         tenant_ids = set([port['tenant_id'] for port in ports] +
                          [subnet['tenant_id'] for subnet in subnets])
         # raise if multiple tenants found or if the only tenant found
@@ -880,7 +927,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                }
         return self._fields(res, fields)
 
-    def _make_port_dict(self, port, fields=None):
+    def _make_port_dict(self, port, fields=None,
+                        process_extensions=True):
         res = {"id": port["id"],
                'name': port['name'],
                "network_id": port["network_id"],
@@ -893,6 +941,11 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                              for ip in port["fixed_ips"]],
                "device_id": port["device_id"],
                "device_owner": port["device_owner"]}
+        # Call auxiliary extend functions, if any
+        if process_extensions:
+            for func in self._dict_extend_functions.get(attributes.PORTS,
+                                                        []):
+                func(self, res, port)
         return self._fields(res, fields)
 
     def _create_bulk(self, resource, context, request_items):
@@ -907,16 +960,22 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             context.session.commit()
         except Exception as e:
             LOG.exception(_("An exception occured while creating "
-                            "the %(resource)s:%(item)s"), locals())
+                            "the %(resource)s:%(item)s"),
+                          {'resource': resource, 'item': item})
             context.session.rollback()
             raise e
         return objects
+
+    def _get_marker_obj(self, context, resource, limit, marker):
+        if limit and marker:
+            return getattr(self, '_get_%s' % resource)(context, marker)
+        return None
 
     def create_network_bulk(self, context, networks):
         return self._create_bulk('network', context, networks)
 
     def create_network(self, context, network):
-        """ handle creation of a single network """
+        """Handle creation of a single network."""
         # single request processing
         n = network['network']
         # NOTE(jkoelker) Get the tenant_id outside of the session to avoid
@@ -974,10 +1033,17 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         network = self._get_network(context, id)
         return self._make_network_dict(network, fields)
 
-    def get_networks(self, context, filters=None, fields=None):
+    def get_networks(self, context, filters=None, fields=None,
+                     sorts=None, limit=None, marker=None,
+                     page_reverse=False):
+        marker_obj = self._get_marker_obj(context, 'network', limit, marker)
         return self._get_collection(context, models_v2.Network,
                                     self._make_network_dict,
-                                    filters=filters, fields=fields)
+                                    filters=filters, fields=fields,
+                                    sorts=sorts,
+                                    limit=limit,
+                                    marker_obj=marker_obj,
+                                    page_reverse=page_reverse)
 
     def get_networks_count(self, context, filters=None):
         return self._get_collection_count(context, models_v2.Network,
@@ -987,24 +1053,31 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         return self._create_bulk('subnet', context, subnets)
 
     def _validate_ip_version(self, ip_version, addr, name):
-        """Check IP field of a subnet match specified ip version"""
+        """Check IP field of a subnet match specified ip version."""
         ip = netaddr.IPNetwork(addr)
         if ip.version != ip_version:
+            data = {'name': name,
+                    'addr': addr,
+                    'ip_version': ip_version}
             msg = _("%(name)s '%(addr)s' does not match "
-                    "the ip_version '%(ip_version)s'") % locals()
+                    "the ip_version '%(ip_version)s'") % data
             raise q_exc.InvalidInput(error_message=msg)
 
     def _validate_subnet(self, s):
-        """Validate a subnet spec"""
+        """Validate a subnet spec."""
 
+        # This method will validate attributes which may change during
+        # create_subnet() and update_subnet().
         # The method requires the subnet spec 's' has 'ip_version' field.
         # If 's' dict does not have 'ip_version' field in an API call
         # (e.g., update_subnet()), you need to set 'ip_version' field
         # before calling this method.
+
         ip_ver = s['ip_version']
 
         if 'cidr' in s:
             self._validate_ip_version(ip_ver, s['cidr'], 'cidr')
+
         if attributes.is_attr_set(s.get('gateway_ip')):
             self._validate_ip_version(ip_ver, s['gateway_ip'], 'gateway_ip')
             if (cfg.CONF.force_gateway_on_subnet and
@@ -1036,13 +1109,33 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             for rt in s['host_routes']:
                 self._validate_host_route(rt, ip_ver)
 
-    def create_subnet(self, context, subnet):
-        s = subnet['subnet']
-        self._validate_subnet(s)
+    def _validate_gw_out_of_pools(self, gateway_ip, pools):
+        for allocation_pool in pools:
+            pool_range = netaddr.IPRange(
+                allocation_pool['start'],
+                allocation_pool['end'])
+            if netaddr.IPAddress(gateway_ip) in pool_range:
+                raise q_exc.GatewayConflictWithAllocationPools(
+                    pool=pool_range,
+                    ip_address=gateway_ip)
 
+    def create_subnet(self, context, subnet):
+
+        s = subnet['subnet']
         net = netaddr.IPNetwork(s['cidr'])
+
         if s['gateway_ip'] is attributes.ATTR_NOT_SPECIFIED:
             s['gateway_ip'] = str(netaddr.IPAddress(net.first + 1))
+
+        if s['allocation_pools'] == attributes.ATTR_NOT_SPECIFIED:
+            s['allocation_pools'] = self._allocate_pools_for_subnet(context, s)
+        else:
+            self._validate_allocation_pools(s['allocation_pools'], s['cidr'])
+            if s['gateway_ip'] is not None:
+                self._validate_gw_out_of_pools(s['gateway_ip'],
+                                               s['allocation_pools'])
+
+        self._validate_subnet(s)
 
         tenant_id = self._get_tenant_id_for_create(context, s)
         with context.session.begin(subtransactions=True):
@@ -1061,9 +1154,6 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                     'shared': network.shared}
             subnet = models_v2.Subnet(**args)
 
-            # perform allocate pools first, since it might raise an error
-            pools = self._allocate_pools_for_subnet(context, s)
-
             context.session.add(subnet)
             if s['dns_nameservers'] is not attributes.ATTR_NOT_SPECIFIED:
                 for addr in s['dns_nameservers']:
@@ -1073,11 +1163,13 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
 
             if s['host_routes'] is not attributes.ATTR_NOT_SPECIFIED:
                 for rt in s['host_routes']:
-                    route = models_v2.Route(subnet_id=subnet.id,
-                                            destination=rt['destination'],
-                                            nexthop=rt['nexthop'])
+                    route = models_v2.SubnetRoute(
+                        subnet_id=subnet.id,
+                        destination=rt['destination'],
+                        nexthop=rt['nexthop'])
                     context.session.add(route)
-            for pool in pools:
+
+            for pool in s['allocation_pools']:
                 ip_pool = models_v2.IPAllocationPool(subnet=subnet,
                                                      first_ip=pool['start'],
                                                      last_ip=pool['end'])
@@ -1091,20 +1183,28 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         return self._make_subnet_dict(subnet)
 
     def update_subnet(self, context, id, subnet):
-        """Update the subnet with new info. The change however will not be
-           realized until the client renew the dns lease or we support
-           gratuitous DHCP offers"""
+        """Update the subnet with new info.
 
+        The change however will not be realized until the client renew the
+        dns lease or we support gratuitous DHCP offers
+        """
         s = subnet['subnet']
-        # Fill 'ip_version' field with the current value since
-        # _validate_subnet() expects subnet spec has 'ip_version' field.
-        s['ip_version'] = self._get_subnet(context, id).ip_version
+        db_subnet = self._get_subnet(context, id)
+        # Fill 'ip_version' and 'allocation_pools' fields with the current
+        # value since _validate_subnet() expects subnet spec has 'ip_version'
+        # and 'allocation_pools' fields.
+        s['ip_version'] = db_subnet.ip_version
+        s['cidr'] = db_subnet.cidr
         self._validate_subnet(s)
+
+        if 'gateway_ip' in s:
+            allocation_pools = [{'start': p['first_ip'], 'end': p['last_ip']}
+                                for p in db_subnet.allocation_pools]
+            self._validate_gw_out_of_pools(s["gateway_ip"], allocation_pools)
 
         with context.session.begin(subtransactions=True):
             if "dns_nameservers" in s:
                 old_dns_list = self._get_dns_by_subnet(context, id)
-
                 new_dns_addr_set = set(s["dns_nameservers"])
                 old_dns_addr_set = set([dns['address']
                                         for dns in old_dns_list])
@@ -1137,7 +1237,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                         if _combine(route) == route_str:
                             context.session.delete(route)
                 for route_str in new_route_set - old_route_set:
-                    route = models_v2.Route(
+                    route = models_v2.SubnetRoute(
                         destination=route_str.partition("_")[0],
                         nexthop=route_str.partition("_")[2],
                         subnet_id=id)
@@ -1154,7 +1254,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             # Check if any tenant owned ports are using this subnet
             allocated_qry = context.session.query(models_v2.IPAllocation)
             allocated_qry = allocated_qry.options(orm.joinedload('ports'))
-            allocated = allocated_qry.filter_by(subnet_id=id).all()
+            allocated = allocated_qry.filter_by(subnet_id=id)
 
             only_auto_del = all(not a.port_id or
                                 a.ports.device_owner in AUTO_DELETE_PORT_OWNERS
@@ -1163,8 +1263,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                 raise q_exc.SubnetInUse(subnet_id=id)
 
             # remove network owned ports
-            for allocation in allocated:
-                context.session.delete(allocation)
+            allocated.delete()
 
             context.session.delete(subnet)
 
@@ -1172,10 +1271,17 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         subnet = self._get_subnet(context, id)
         return self._make_subnet_dict(subnet, fields)
 
-    def get_subnets(self, context, filters=None, fields=None):
+    def get_subnets(self, context, filters=None, fields=None,
+                    sorts=None, limit=None, marker=None,
+                    page_reverse=False):
+        marker_obj = self._get_marker_obj(context, 'subnet', limit, marker)
         return self._get_collection(context, models_v2.Subnet,
                                     self._make_subnet_dict,
-                                    filters=filters, fields=fields)
+                                    filters=filters, fields=fields,
+                                    sorts=sorts,
+                                    limit=limit,
+                                    marker_obj=marker_obj,
+                                    page_reverse=page_reverse)
 
     def get_subnets_count(self, context, filters=None):
         return self._get_collection_count(context, models_v2.Subnet,
@@ -1236,7 +1342,10 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                     subnet_id = ip['subnet_id']
                     LOG.debug(_("Allocated IP %(ip_address)s "
                                 "(%(network_id)s/%(subnet_id)s/%(port_id)s)"),
-                              locals())
+                              {'ip_address': ip_address,
+                               'network_id': network_id,
+                               'subnet_id': subnet_id,
+                               'port_id': port_id})
                     allocated = models_v2.IPAllocation(
                         network_id=network_id,
                         port_id=port_id,
@@ -1246,7 +1355,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                     )
                     context.session.add(allocated)
 
-        return self._make_port_dict(port)
+        return self._make_port_dict(port, process_extensions=False)
 
     def update_port(self, context, id, port):
         p = port['port']
@@ -1257,15 +1366,12 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
             if 'fixed_ips' in p:
                 self._recycle_expired_ip_allocations(context,
                                                      port['network_id'])
-                original = self._make_port_dict(port)
+                original = self._make_port_dict(port, process_extensions=False)
                 ips = self._update_ips_for_port(context,
                                                 port["network_id"],
                                                 id,
                                                 original["fixed_ips"],
                                                 p['fixed_ips'])
-                # 'fixed_ip's not part of DB so it is deleted
-                del p['fixed_ips']
-
                 # Update ips if necessary
                 for ip in ips:
                     allocated = models_v2.IPAllocation(
@@ -1273,8 +1379,9 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                         ip_address=ip['ip_address'], subnet_id=ip['subnet_id'],
                         expiration=self._default_allocation_expiration())
                     context.session.add(allocated)
-
-            port.update(p)
+        # Remove all attributes in p which are not in the port DB model
+        # and then update the port
+        port.update(self._filter_non_model_columns(p, models_v2.Port))
 
         return self._make_port_dict(port)
 
@@ -1285,32 +1392,32 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
     def _delete_port(self, context, id):
         port = self._get_port(context, id)
 
-        allocated_qry = context.session.query(models_v2.IPAllocation)
+        allocated_qry = context.session.query(
+            models_v2.IPAllocation).with_lockmode('update')
         # recycle all of the IP's
-        allocated = allocated_qry.filter_by(port_id=id).all()
-        if allocated:
-            for a in allocated:
-                subnet = self._get_subnet(context, a['subnet_id'])
-                # Check if IP was allocated from allocation pool
-                if QuantumDbPluginV2._check_ip_in_allocation_pool(
-                    context, a['subnet_id'], subnet['gateway_ip'],
-                    a['ip_address']):
-                    QuantumDbPluginV2._hold_ip(context,
-                                               a['network_id'],
-                                               a['subnet_id'],
-                                               id,
-                                               a['ip_address'])
-                else:
-                    # IPs out of allocation pool will not be recycled, but
-                    # we do need to delete the allocation from the DB
-                    QuantumDbPluginV2._delete_ip_allocation(
-                        context, a['network_id'],
-                        a['subnet_id'], a['ip_address'])
-                    msg_dict = dict(address=a['ip_address'],
-                                    subnet_id=a['subnet_id'])
-                    msg = _("%(address)s (%(subnet_id)s) is not "
-                            "recycled") % msg_dict
-                    LOG.debug(msg)
+        allocated = allocated_qry.filter_by(port_id=id)
+        for a in allocated:
+            subnet = self._get_subnet(context, a['subnet_id'])
+            # Check if IP was allocated from allocation pool
+            if QuantumDbPluginV2._check_ip_in_allocation_pool(
+                context, a['subnet_id'], subnet['gateway_ip'],
+                a['ip_address']):
+                QuantumDbPluginV2._hold_ip(context,
+                                           a['network_id'],
+                                           a['subnet_id'],
+                                           id,
+                                           a['ip_address'])
+            else:
+                # IPs out of allocation pool will not be recycled, but
+                # we do need to delete the allocation from the DB
+                QuantumDbPluginV2._delete_ip_allocation(
+                    context, a['network_id'],
+                    a['subnet_id'], a['ip_address'])
+                msg_dict = {'address': a['ip_address'],
+                            'subnet_id': a['subnet_id']}
+                msg = _("%(address)s (%(subnet_id)s) is not "
+                        "recycled") % msg_dict
+                LOG.debug(msg)
 
         context.session.delete(port)
 
@@ -1318,7 +1425,8 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         port = self._get_port(context, id)
         return self._make_port_dict(port, fields)
 
-    def _get_ports_query(self, context, filters=None):
+    def _get_ports_query(self, context, filters=None, sorts=None, limit=None,
+                         marker_obj=None, page_reverse=False):
         Port = models_v2.Port
         IPAllocation = models_v2.IPAllocation
 
@@ -1338,11 +1446,24 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                 query = query.filter(IPAllocation.subnet_id.in_(subnet_ids))
 
         query = self._apply_filters_to_query(query, Port, filters)
+        if limit and page_reverse and sorts:
+            sorts = [(s[0], not s[1]) for s in sorts]
+        query = sqlalchemyutils.paginate_query(query, Port, limit,
+                                               sorts, marker_obj)
         return query
 
-    def get_ports(self, context, filters=None, fields=None):
-        query = self._get_ports_query(context, filters)
-        return [self._make_port_dict(c, fields) for c in query.all()]
+    def get_ports(self, context, filters=None, fields=None,
+                  sorts=None, limit=None, marker=None,
+                  page_reverse=False):
+        marker_obj = self._get_marker_obj(context, 'port', limit, marker)
+        query = self._get_ports_query(context, filters=filters,
+                                      sorts=sorts, limit=limit,
+                                      marker_obj=marker_obj,
+                                      page_reverse=page_reverse)
+        items = [self._make_port_dict(c, fields) for c in query]
+        if limit and page_reverse:
+            items.reverse()
+        return items
 
     def get_ports_count(self, context, filters=None):
         return self._get_ports_query(context, filters).count()

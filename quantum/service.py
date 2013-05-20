@@ -20,9 +20,10 @@ import logging as std_logging
 import os
 import random
 
+from oslo.config import cfg
+
 from quantum.common import config
 from quantum import context
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import loopingcall
@@ -33,9 +34,6 @@ from quantum import wsgi
 LOG = logging.getLogger(__name__)
 
 service_opts = [
-    cfg.IntOpt('report_interval',
-               default=10,
-               help=_('Seconds between nodes reporting state to datastore')),
     cfg.IntOpt('periodic_interval',
                default=40,
                help=_('Seconds between running periodic tasks')),
@@ -122,7 +120,8 @@ class Service(service.Service):
     """Service object for binaries running on hosts.
 
     A service takes a manager and enables rpc by listening to queues based
-    on topic. It also periodically runs tasks on the manager."""
+    on topic. It also periodically runs tasks on the manager.
+    """
 
     def __init__(self, host, binary, topic, manager, report_interval=None,
                  periodic_interval=None, periodic_fuzzy_delay=None,
@@ -143,7 +142,7 @@ class Service(service.Service):
         self.manager.init_host()
         super(Service, self).start()
         if self.report_interval:
-            pulse = loopingcall.LoopingCall(self.report_state)
+            pulse = loopingcall.FixedIntervalLoopingCall(self.report_state)
             pulse.start(interval=self.report_interval,
                         initial_delay=self.report_interval)
             self.timers.append(pulse)
@@ -154,7 +153,8 @@ class Service(service.Service):
             else:
                 initial_delay = None
 
-            periodic = loopingcall.LoopingCall(self.periodic_tasks)
+            periodic = loopingcall.FixedIntervalLoopingCall(
+                self.periodic_tasks)
             periodic.start(interval=self.periodic_interval,
                            initial_delay=initial_delay)
             self.timers.append(periodic)

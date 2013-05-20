@@ -17,7 +17,10 @@
 # @author: Sumit Naiksatam, Cisco Systems, Inc.
 # @author: Rohit Agarwalla, Cisco Systems, Inc.
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
+
+from quantum.agent.common import config
+from quantum import scheduler
 
 DEFAULT_VLAN_RANGES = []
 DEFAULT_INTERFACE_MAPPINGS = []
@@ -43,11 +46,15 @@ agent_opts = [
     cfg.IntOpt('polling_interval', default=2,
                help=_("The number of seconds the agent will wait between "
                       "polling for local device changes.")),
-    cfg.StrOpt('root_helper', default='sudo',
-               help=_("Root helper application.")),
+    #TODO(rkukura): Change default to False before havana rc1
+    cfg.BoolOpt('rpc_support_old_agents', default=True,
+                help=_("Enable server RPC compatibility with old agents")),
 ]
 
 
 cfg.CONF.register_opts(vlan_opts, "VLANS")
 cfg.CONF.register_opts(bridge_opts, "LINUX_BRIDGE")
 cfg.CONF.register_opts(agent_opts, "AGENT")
+cfg.CONF.register_opts(scheduler.AGENTS_SCHEDULER_OPTS)
+config.register_agent_state_opts_helper(cfg.CONF)
+config.register_root_helper(cfg.CONF)

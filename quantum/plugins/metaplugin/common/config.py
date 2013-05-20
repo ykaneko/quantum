@@ -15,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
 
 
 meta_plugin_opts = [
@@ -37,7 +37,8 @@ proxy_plugin_opts = [
     cfg.StrOpt('admin_user',
                help=_("Admin user")),
     cfg.StrOpt('admin_password',
-               help=_("Admin password")),
+               help=_("Admin password"),
+               secret=True),
     cfg.StrOpt('admin_tenant_name',
                help=_("Admin tenant name")),
     cfg.StrOpt('auth_url',

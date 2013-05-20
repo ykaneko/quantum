@@ -18,8 +18,10 @@
 import netaddr
 
 from quantum.common import constants as q_const
+from quantum.common import utils
 from quantum.db import models_v2
 from quantum.db import securitygroups_db as sg_db
+from quantum.extensions import securitygroup as ext_sg
 from quantum.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -59,18 +61,76 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         self.notifier.security_groups_rule_updated(context,
                                                    [rule['security_group_id']])
 
+    def update_security_group_on_port(self, context, id, port,
+                                      original_port, updated_port):
+        """Update security groups on port.
+
+        This method returns a flag which indicates request notification
+        is required and does not perform notification itself.
+        It is because another changes for the port may require notification.
+        """
+        need_notify = False
+        if ext_sg.SECURITYGROUPS in port['port']:
+            # delete the port binding and read it with the new rules
+            port['port'][ext_sg.SECURITYGROUPS] = (
+                self._get_security_groups_on_port(context, port))
+            self._delete_port_security_group_bindings(context, id)
+            self._process_port_create_security_group(
+                context,
+                updated_port,
+                port['port'][ext_sg.SECURITYGROUPS])
+            need_notify = True
+        else:
+            updated_port[ext_sg.SECURITYGROUPS] = (
+                original_port[ext_sg.SECURITYGROUPS])
+        return need_notify
+
+    def is_security_group_member_updated(self, context,
+                                         original_port, updated_port):
+        """Check security group member updated or not.
+
+        This method returns a flag which indicates request notification
+        is required and does not perform notification itself.
+        It is because another changes for the port may require notification.
+        """
+        need_notify = False
+        if (original_port['fixed_ips'] != updated_port['fixed_ips'] or
+            not utils.compare_elements(
+                original_port.get(ext_sg.SECURITYGROUPS),
+                updated_port.get(ext_sg.SECURITYGROUPS))):
+            self.notify_security_groups_member_updated(
+                context, updated_port)
+            need_notify = True
+        return need_notify
+
+    def notify_security_groups_member_updated(self, context, port):
+        """Notify update event of security group members.
+
+        The agent setups the iptables rule to allow
+        ingress packet from the dhcp server (as a part of provider rules),
+        so we need to notify an update of dhcp server ip
+        address to the plugin agent.
+        security_groups_provider_updated() just notifies that an event
+        occurs and the plugin agent fetches the update provider
+        rule in the other RPC call (security_group_rules_for_devices).
+        """
+        if port['device_owner'] == q_const.DEVICE_OWNER_DHCP:
+            self.notifier.security_groups_provider_updated(context)
+        else:
+            self.notifier.security_groups_member_updated(
+                context, port.get(ext_sg.SECURITYGROUPS))
+
 
 class SecurityGroupServerRpcCallbackMixin(object):
-    """A mix-in that enable SecurityGroup agent
-
-    support in plugin implementations.
+    """A mix-in that enable SecurityGroup agent support in plugin
+    implementations.
     """
 
     def security_group_rules_for_devices(self, context, **kwargs):
-        """ return security group rules for each port
+        """Return security group rules for each port.
 
-        also convert source_group_id rule
-        to source_ip_prefix rule
+        also convert remote_group_id rule
+        to source_ip_prefix and dest_ip_prefix rule
 
         :params devices: list of devices
         :returns: port correspond to the devices with security group rules
@@ -102,12 +162,12 @@ class SecurityGroupServerRpcCallbackMixin(object):
         query = query.filter(sg_binding_port.in_(ports.keys()))
         return query.all()
 
-    def _select_ips_for_source_group(self, context, source_group_ids):
+    def _select_ips_for_remote_group(self, context, remote_group_ids):
         ips_by_group = {}
-        if not source_group_ids:
+        if not remote_group_ids:
             return ips_by_group
-        for source_group_id in source_group_ids:
-            ips_by_group[source_group_id] = []
+        for remote_group_id in remote_group_ids:
+            ips_by_group[remote_group_id] = []
 
         ip_port = models_v2.IPAllocation.port_id
         sg_binding_port = sg_db.SecurityGroupPortBinding.port_id
@@ -117,20 +177,19 @@ class SecurityGroupServerRpcCallbackMixin(object):
                                       models_v2.IPAllocation.ip_address)
         query = query.join(models_v2.IPAllocation,
                            ip_port == sg_binding_port)
-        query = query.filter(sg_binding_sgid.in_(source_group_ids))
-        ip_in_db = query.all()
-        for security_group_id, ip_address in ip_in_db:
+        query = query.filter(sg_binding_sgid.in_(remote_group_ids))
+        for security_group_id, ip_address in query:
             ips_by_group[security_group_id].append(ip_address)
         return ips_by_group
 
-    def _select_source_group_ids(self, ports):
-        source_group_ids = []
+    def _select_remote_group_ids(self, ports):
+        remote_group_ids = []
         for port in ports.values():
             for rule in port.get('security_group_rules'):
-                source_group_id = rule.get('source_group_id')
-                if source_group_id:
-                    source_group_ids.append(source_group_id)
-        return source_group_ids
+                remote_group_id = rule.get('remote_group_id')
+                if remote_group_id:
+                    remote_group_ids.append(remote_group_id)
+        return remote_group_ids
 
     def _select_network_ids(self, ports):
         return set((port['network_id'] for port in ports.values()))
@@ -149,26 +208,26 @@ class SecurityGroupServerRpcCallbackMixin(object):
         for network_id in network_ids:
             ips[network_id] = []
 
-        for port, ip in query.all():
+        for port, ip in query:
             ips[port['network_id']].append(ip)
         return ips
 
-    def _convert_source_group_id_to_ip_prefix(self, context, ports):
-        source_group_ids = self._select_source_group_ids(ports)
-        ips = self._select_ips_for_source_group(context, source_group_ids)
+    def _convert_remote_group_id_to_ip_prefix(self, context, ports):
+        remote_group_ids = self._select_remote_group_ids(ports)
+        ips = self._select_ips_for_remote_group(context, remote_group_ids)
         for port in ports.values():
             updated_rule = []
             for rule in port.get('security_group_rules'):
-                source_group_id = rule.get('source_group_id')
+                remote_group_id = rule.get('remote_group_id')
                 direction = rule.get('direction')
                 direction_ip_prefix = DIRECTION_IP_PREFIX[direction]
-                if not source_group_id:
+                if not remote_group_id:
                     updated_rule.append(rule)
                     continue
 
-                port['security_group_source_groups'].append(source_group_id)
+                port['security_group_source_groups'].append(remote_group_id)
                 base_rule = rule
-                for ip in ips[source_group_id]:
+                for ip in ips[remote_group_id]:
                     if ip in port.get('fixed_ips', []):
                         continue
                     ip_rule = base_rule.copy()
@@ -181,21 +240,6 @@ class SecurityGroupServerRpcCallbackMixin(object):
                     updated_rule.append(ip_rule)
             port['security_group_rules'] = updated_rule
         return ports
-
-    def _add_default_egress_rule(self, port, ethertype, ips):
-        """ Adding default egress rule which allows all egress traffic. """
-        egress_rule = [r for r in port['security_group_rules']
-                       if (r['direction'] == 'egress' and
-                           r['ethertype'] == ethertype)]
-        if len(egress_rule) > 0:
-            return
-        for ip in port['fixed_ips']:
-            version = netaddr.IPAddress(ip).version
-            if "IPv%s" % version == ethertype:
-                default_egress_rule = {'direction': 'egress',
-                                       'ethertype': ethertype}
-                port['security_group_rules'].append(default_egress_rule)
-                return
 
     def _add_ingress_dhcp_rule(self, port, ips):
         dhcp_ips = ips.get(port['network_id'])
@@ -231,8 +275,6 @@ class SecurityGroupServerRpcCallbackMixin(object):
         network_ids = self._select_network_ids(ports)
         ips = self._select_dhcp_ips_for_network_ids(context, network_ids)
         for port in ports.values():
-            self._add_default_egress_rule(port, q_const.IPv4, ips)
-            self._add_default_egress_rule(port, q_const.IPv6, ips)
             self._add_ingress_ra_rule(port, ips)
             self._add_ingress_dhcp_rule(port, ips)
 
@@ -248,12 +290,13 @@ class SecurityGroupServerRpcCallbackMixin(object):
                 'ethertype': rule_in_db['ethertype'],
             }
             for key in ('protocol', 'port_range_min', 'port_range_max',
-                        'source_ip_prefix', 'source_group_id'):
+                        'remote_ip_prefix', 'remote_group_id'):
                 if rule_in_db.get(key):
-                    if key == 'source_ip_prefix' and direction == 'egress':
-                        rule_dict['dest_ip_prefix'] = rule_in_db[key]
+                    if key == 'remote_ip_prefix':
+                        direction_ip_prefix = DIRECTION_IP_PREFIX[direction]
+                        rule_dict[direction_ip_prefix] = rule_in_db[key]
                         continue
                     rule_dict[key] = rule_in_db[key]
             port['security_group_rules'].append(rule_dict)
         self._apply_provider_rule(context, ports)
-        return self._convert_source_group_id_to_ip_prefix(context, ports)
+        return self._convert_remote_group_id_to_ip_prefix(context, ports)

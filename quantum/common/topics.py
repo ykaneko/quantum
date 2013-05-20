@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,8 +25,11 @@ UPDATE = 'update'
 AGENT = 'q-agent-notifier'
 PLUGIN = 'q-plugin'
 DHCP = 'q-dhcp-notifer'
+LOADBALANCER_PLUGIN = 'q-loadbalancer-plugin'
 
 L3_AGENT = 'l3_agent'
+DHCP_AGENT = 'dhcp_agent'
+LOADBALANCER_AGENT = 'loadbalancer_agent'
 
 FAKEVM_AGENT = 'fakevm_agent'
 

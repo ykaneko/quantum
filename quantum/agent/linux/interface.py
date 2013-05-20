@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,15 +18,17 @@
 import abc
 
 import netaddr
+from oslo.config import cfg
 
+from quantum.agent.common import config
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.agent.linux import utils
 from quantum.common import exceptions
 from quantum.extensions.flavor import (FLAVOR_NETWORK)
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
+
 
 LOG = logging.getLogger(__name__)
 
@@ -37,10 +39,23 @@ OPTS = [
     cfg.BoolOpt('ovs_use_veth',
                 default=False,
                 help=_('Uses veth for an interface or not')),
-    cfg.StrOpt('network_device_mtu',
+    cfg.IntOpt('network_device_mtu',
                help=_('MTU setting for device.')),
     cfg.StrOpt('meta_flavor_driver_mappings',
-               help=_('Mapping between flavor and LinuxInterfaceDriver'))
+               help=_('Mapping between flavor and LinuxInterfaceDriver')),
+    cfg.StrOpt('admin_user',
+               help=_("Admin username")),
+    cfg.StrOpt('admin_password',
+               help=_("Admin password"),
+               secret=True),
+    cfg.StrOpt('admin_tenant_name',
+               help=_("Admin tenant name")),
+    cfg.StrOpt('auth_url',
+               help=_("Authentication URL")),
+    cfg.StrOpt('auth_strategy', default='keystone',
+               help=_("The type of authentication to use")),
+    cfg.StrOpt('auth_region',
+               help=_("Authentication region")),
 ]
 
 
@@ -53,12 +68,15 @@ class LinuxInterfaceDriver(object):
 
     def __init__(self, conf):
         self.conf = conf
+        self.root_helper = config.get_root_helper(conf)
 
     def init_l3(self, device_name, ip_cidrs, namespace=None):
         """Set the L3 settings for the interface using data from the port.
-           ip_cidrs: list of 'X.X.X.X/YY' strings
+
+        ip_cidrs: list of 'X.X.X.X/YY' strings
         """
-        device = ip_lib.IPDevice(device_name, self.conf.root_helper,
+        device = ip_lib.IPDevice(device_name,
+                                 self.root_helper,
                                  namespace=namespace)
 
         previous = {}
@@ -132,7 +150,7 @@ class OVSInterfaceDriver(LinuxInterfaceDriver):
                 'external-ids:iface-status=active',
                 '--', 'set', 'Interface', device_name,
                 'external-ids:attached-mac=%s' % mac_address]
-        utils.execute(cmd, self.conf.root_helper)
+        utils.execute(cmd, self.root_helper)
 
     def plug(self, network_id, port_id, device_name, mac_address,
              bridge=None, namespace=None, prefix=None):
@@ -143,20 +161,24 @@ class OVSInterfaceDriver(LinuxInterfaceDriver):
         self.check_bridge_exists(bridge)
 
         if not ip_lib.device_exists(device_name,
-                                    self.conf.root_helper,
+                                    self.root_helper,
                                     namespace=namespace):
 
-            ip = ip_lib.IPWrapper(self.conf.root_helper)
+            ip = ip_lib.IPWrapper(self.root_helper)
             tap_name = self._get_tap_name(device_name, prefix)
 
             if self.conf.ovs_use_veth:
-                root_dev, ns_dev = ip.add_veth(tap_name, device_name)
+                # Create ns_dev in a namespace if one is configured.
+                root_dev, ns_dev = ip.add_veth(tap_name,
+                                               device_name,
+                                               namespace2=namespace)
+            else:
+                ns_dev = ip.device(device_name)
 
             internal = not self.conf.ovs_use_veth
             self._ovs_add_port(bridge, tap_name, port_id, mac_address,
                                internal=internal)
 
-            ns_dev = ip.device(device_name)
             ns_dev.link.set_address(mac_address)
 
             if self.conf.network_device_mtu:
@@ -164,7 +186,8 @@ class OVSInterfaceDriver(LinuxInterfaceDriver):
                 if self.conf.ovs_use_veth:
                     root_dev.link.set_mtu(self.conf.network_device_mtu)
 
-            if namespace:
+            # Add an interface created by ovs to the namespace.
+            if not self.conf.ovs_use_veth and namespace:
                 namespace_obj = ip.ensure_namespace(namespace)
                 namespace_obj.add_device_to_namespace(ns_dev)
 
@@ -181,12 +204,13 @@ class OVSInterfaceDriver(LinuxInterfaceDriver):
 
         tap_name = self._get_tap_name(device_name, prefix)
         self.check_bridge_exists(bridge)
-        ovs = ovs_lib.OVSBridge(bridge, self.conf.root_helper)
+        ovs = ovs_lib.OVSBridge(bridge, self.root_helper)
 
         try:
             ovs.delete_port(tap_name)
             if self.conf.ovs_use_veth:
-                device = ip_lib.IPDevice(device_name, self.conf.root_helper,
+                device = ip_lib.IPDevice(device_name,
+                                         self.root_helper,
                                          namespace)
                 device.link.delete()
                 LOG.debug(_("Unplugged interface '%s'"), device_name)
@@ -204,25 +228,23 @@ class BridgeInterfaceDriver(LinuxInterfaceDriver):
              bridge=None, namespace=None, prefix=None):
         """Plugin the interface."""
         if not ip_lib.device_exists(device_name,
-                                    self.conf.root_helper,
+                                    self.root_helper,
                                     namespace=namespace):
-            ip = ip_lib.IPWrapper(self.conf.root_helper)
+            ip = ip_lib.IPWrapper(self.root_helper)
 
             # Enable agent to define the prefix
             if prefix:
                 tap_name = device_name.replace(prefix, 'tap')
             else:
                 tap_name = device_name.replace(self.DEV_NAME_PREFIX, 'tap')
-            root_veth, ns_veth = ip.add_veth(tap_name, device_name)
+            # Create ns_veth in a namespace if one is configured.
+            root_veth, ns_veth = ip.add_veth(tap_name, device_name,
+                                             namespace2=namespace)
             ns_veth.link.set_address(mac_address)
 
             if self.conf.network_device_mtu:
                 root_veth.link.set_mtu(self.conf.network_device_mtu)
                 ns_veth.link.set_mtu(self.conf.network_device_mtu)
-
-            if namespace:
-                namespace_obj = ip.ensure_namespace(namespace)
-                namespace_obj.add_device_to_namespace(ns_veth)
 
             root_veth.link.set_up()
             ns_veth.link.set_up()
@@ -232,7 +254,7 @@ class BridgeInterfaceDriver(LinuxInterfaceDriver):
 
     def unplug(self, device_name, bridge=None, namespace=None, prefix=None):
         """Unplug the interface."""
-        device = ip_lib.IPDevice(device_name, self.conf.root_helper, namespace)
+        device = ip_lib.IPDevice(device_name, self.root_helper, namespace)
         try:
             device.link.delete()
             LOG.debug(_("Unplugged interface '%s'"), device_name)
@@ -260,18 +282,22 @@ class MetaInterfaceDriver(LinuxInterfaceDriver):
                 self.conf.meta_flavor_driver_mappings.split(',')]:
             self.flavor_driver_map[flavor] = self._load_driver(driver_name)
 
-    def _get_driver_by_network_id(self, network_id):
+    def _get_flavor_by_network_id(self, network_id):
         network = self.quantum.show_network(network_id)
-        flavor = network['network'][FLAVOR_NETWORK]
+        return network['network'][FLAVOR_NETWORK]
+
+    def _get_driver_by_network_id(self, network_id):
+        flavor = self._get_flavor_by_network_id(network_id)
         return self.flavor_driver_map[flavor]
 
-    def _get_driver_by_device_name(self, device_name, namespace=None):
+    def _set_device_plugin_tag(self, network_id, device_name, namespace=None):
+        plugin_tag = self._get_flavor_by_network_id(network_id)
         device = ip_lib.IPDevice(device_name, self.conf.root_helper, namespace)
-        mac_address = device.link.address
-        ports = self.quantum.list_ports(mac_address=mac_address)
-        if not 'ports' in ports or len(ports['ports']) < 1:
-            raise Exception(_('No port for this device %s') % device_name)
-        return self._get_driver_by_network_id(ports['ports'][0]['network_id'])
+        device.link.set_alias(plugin_tag)
+
+    def _get_device_plugin_tag(self, device_name, namespace=None):
+        device = ip_lib.IPDevice(device_name, self.conf.root_helper, namespace)
+        return device.link.alias
 
     def get_device_name(self, port):
         driver = self._get_driver_by_network_id(port.network_id)
@@ -280,11 +306,14 @@ class MetaInterfaceDriver(LinuxInterfaceDriver):
     def plug(self, network_id, port_id, device_name, mac_address,
              bridge=None, namespace=None, prefix=None):
         driver = self._get_driver_by_network_id(network_id)
-        return driver.plug(network_id, port_id, device_name, mac_address,
-                           bridge=bridge, namespace=namespace, prefix=prefix)
+        ret = driver.plug(network_id, port_id, device_name, mac_address,
+                          bridge=bridge, namespace=namespace, prefix=prefix)
+        self._set_device_plugin_tag(network_id, device_name, namespace)
+        return ret
 
     def unplug(self, device_name, bridge=None, namespace=None, prefix=None):
-        driver = self._get_driver_by_device_name(device_name, namespace=None)
+        plugin_tag = self._get_device_plugin_tag(device_name, namespace)
+        driver = self.flavor_driver_map[plugin_tag]
         return driver.unplug(device_name, bridge, namespace, prefix)
 
     def _load_driver(self, driver_provider):

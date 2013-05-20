@@ -19,10 +19,12 @@
 import socket
 
 import mock
-import unittest2 as unittest
+import testtools
 import webob
 
 from quantum.agent.metadata import agent
+from quantum.common import utils
+from quantum.tests import base
 
 
 class FakeConf(object):
@@ -37,19 +39,18 @@ class FakeConf(object):
     metadata_proxy_shared_secret = 'secret'
 
 
-class TestMetadataProxyHandler(unittest.TestCase):
+class TestMetadataProxyHandler(base.BaseTestCase):
     def setUp(self):
+        super(TestMetadataProxyHandler, self).setUp()
         self.qclient_p = mock.patch('quantumclient.v2_0.client.Client')
         self.qclient = self.qclient_p.start()
+        self.addCleanup(self.qclient_p.stop)
 
         self.log_p = mock.patch.object(agent, 'LOG')
         self.log = self.log_p.start()
+        self.addCleanup(self.log_p.stop)
 
         self.handler = agent.MetadataProxyHandler(FakeConf)
-
-    def tearDown(self):
-        self.log_p.stop()
-        self.qclient_p.stop()
 
     def test_call(self):
         req = mock.Mock()
@@ -94,7 +95,9 @@ class TestMetadataProxyHandler(unittest.TestCase):
                 region_name=FakeConf.auth_region,
                 auth_url=FakeConf.auth_url,
                 password=FakeConf.admin_password,
-                auth_strategy=FakeConf.auth_strategy)
+                auth_strategy=FakeConf.auth_strategy,
+                auth_token=None,
+                endpoint_url=None)
         ]
 
         if router_id:
@@ -177,9 +180,12 @@ class TestMetadataProxyHandler(unittest.TestCase):
             self._get_instance_id_helper(headers, ports, networks=['the_id'])
         )
 
-    def _proxy_request_test_helper(self, response_code):
+    def _proxy_request_test_helper(self, response_code=200, method='GET'):
         hdrs = {'X-Forwarded-For': '8.8.8.8'}
-        req = mock.Mock(path_info='/the_path', query_string='', headers=hdrs)
+        body = 'body'
+
+        req = mock.Mock(path_info='/the_path', query_string='', headers=hdrs,
+                        method=method, body=body)
         resp = mock.Mock(status=response_code)
         with mock.patch.object(self.handler, '_sign_instance_id') as sign:
             sign.return_value = 'signed'
@@ -190,15 +196,21 @@ class TestMetadataProxyHandler(unittest.TestCase):
                 mock_http.assert_has_calls([
                     mock.call().request(
                         'http://9.9.9.9:8775/the_path',
+                        method=method,
                         headers={
                             'X-Forwarded-For': '8.8.8.8',
                             'X-Instance-ID-Signature': 'signed',
                             'X-Instance-ID': 'the_id'
-                        }
+                        },
+                        body=body
                     )]
                 )
 
                 return retval
+
+    def test_proxy_request_post(self):
+        self.assertEqual('content',
+                         self._proxy_request_test_helper(method='POST'))
 
     def test_proxy_request_200(self):
         self.assertEqual('content', self._proxy_request_test_helper(200))
@@ -211,12 +223,16 @@ class TestMetadataProxyHandler(unittest.TestCase):
         self.assertIsInstance(self._proxy_request_test_helper(404),
                               webob.exc.HTTPNotFound)
 
+    def test_proxy_request_409(self):
+        self.assertIsInstance(self._proxy_request_test_helper(409),
+                              webob.exc.HTTPConflict)
+
     def test_proxy_request_500(self):
         self.assertIsInstance(self._proxy_request_test_helper(500),
                               webob.exc.HTTPInternalServerError)
 
     def test_proxy_request_other_code(self):
-        with self.assertRaises(Exception) as e:
+        with testtools.ExpectedException(Exception):
             self._proxy_request_test_helper(302)
 
     def test_sign_instance_id(self):
@@ -226,7 +242,7 @@ class TestMetadataProxyHandler(unittest.TestCase):
         )
 
 
-class TestUnixDomainHttpProtocol(unittest.TestCase):
+class TestUnixDomainHttpProtocol(base.BaseTestCase):
     def test_init_empty_client(self):
         u = agent.UnixDomainHttpProtocol(mock.Mock(), '', mock.Mock())
         self.assertEqual(u.client_address, ('<local>', 0))
@@ -236,14 +252,13 @@ class TestUnixDomainHttpProtocol(unittest.TestCase):
         self.assertEqual(u.client_address, 'foo')
 
 
-class TestUnixDomainWSGIServer(unittest.TestCase):
+class TestUnixDomainWSGIServer(base.BaseTestCase):
     def setUp(self):
+        super(TestUnixDomainWSGIServer, self).setUp()
         self.eventlet_p = mock.patch.object(agent, 'eventlet')
         self.eventlet = self.eventlet_p.start()
+        self.addCleanup(self.eventlet_p.stop)
         self.server = agent.UnixDomainWSGIServer('test')
-
-    def tearDown(self):
-        self.eventlet_p.stop()
 
     def test_start(self):
         mock_app = mock.Mock()
@@ -276,20 +291,19 @@ class TestUnixDomainWSGIServer(unittest.TestCase):
             self.assertTrue(len(logging.mock_calls))
 
 
-class TestUnixDomainMetadataProxy(unittest.TestCase):
+class TestUnixDomainMetadataProxy(base.BaseTestCase):
     def setUp(self):
+        super(TestUnixDomainMetadataProxy, self).setUp()
         self.cfg_p = mock.patch.object(agent, 'cfg')
         self.cfg = self.cfg_p.start()
+        self.addCleanup(self.cfg_p.stop)
         self.cfg.CONF.metadata_proxy_socket = '/the/path'
-
-    def tearDown(self):
-        self.cfg_p.stop()
 
     def test_init_doesnot_exists(self):
         with mock.patch('os.path.isdir') as isdir:
             with mock.patch('os.makedirs') as makedirs:
                 isdir.return_value = False
-                p = agent.UnixDomainMetadataProxy(mock.Mock())
+                agent.UnixDomainMetadataProxy(mock.Mock())
 
                 isdir.assert_called_once_with('/the')
                 makedirs.assert_called_once_with('/the', 0755)
@@ -298,7 +312,7 @@ class TestUnixDomainMetadataProxy(unittest.TestCase):
         with mock.patch('os.path.isdir') as isdir:
             with mock.patch('os.unlink') as unlink:
                 isdir.return_value = True
-                p = agent.UnixDomainMetadataProxy(mock.Mock())
+                agent.UnixDomainMetadataProxy(mock.Mock())
 
                 isdir.assert_called_once_with('/the')
                 unlink.assert_called_once_with('/the/path')
@@ -311,7 +325,7 @@ class TestUnixDomainMetadataProxy(unittest.TestCase):
                     exists.return_value = False
                     unlink.side_effect = OSError
 
-                    p = agent.UnixDomainMetadataProxy(mock.Mock())
+                    agent.UnixDomainMetadataProxy(mock.Mock())
 
                     isdir.assert_called_once_with('/the')
                     unlink.assert_called_once_with('/the/path')
@@ -325,8 +339,8 @@ class TestUnixDomainMetadataProxy(unittest.TestCase):
                     exists.return_value = True
                     unlink.side_effect = OSError
 
-                    with self.assertRaises(OSError):
-                        p = agent.UnixDomainMetadataProxy(mock.Mock())
+                    with testtools.ExpectedException(OSError):
+                        agent.UnixDomainMetadataProxy(mock.Mock())
 
                     isdir.assert_called_once_with('/the')
                     unlink.assert_called_once_with('/the/path')
@@ -356,11 +370,12 @@ class TestUnixDomainMetadataProxy(unittest.TestCase):
             with mock.patch('eventlet.monkey_patch') as eventlet:
                 with mock.patch.object(agent, 'config') as config:
                     with mock.patch.object(agent, 'cfg') as cfg:
-                        agent.main()
+                        with mock.patch.object(utils, 'cfg'):
+                            agent.main()
 
-                        self.assertTrue(eventlet.called)
-                        self.assertTrue(config.setup_logging.called)
-                        proxy.assert_has_calls([
-                            mock.call(cfg.CONF),
-                            mock.call().run()]
-                        )
+                            self.assertTrue(eventlet.called)
+                            self.assertTrue(config.setup_logging.called)
+                            proxy.assert_has_calls([
+                                mock.call(cfg.CONF),
+                                mock.call().run()]
+                            )

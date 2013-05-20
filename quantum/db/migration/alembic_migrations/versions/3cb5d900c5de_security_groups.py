@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright 2013 OpenStack LLC
+# Copyright 2013 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -30,7 +30,11 @@ down_revision = '48b6f43f7471'
 # Change to ['*'] if this migration applies to all plugins
 
 migration_for_plugins = [
-    'quantum.plugins.linuxbridge.lb_quantum_plugin.LinuxBridgePluginV2'
+    'quantum.plugins.linuxbridge.lb_quantum_plugin.LinuxBridgePluginV2',
+    'quantum.plugins.nicira.QuantumPlugin.NvpPluginV2',
+    'quantum.plugins.openvswitch.ovs_quantum_plugin.OVSQuantumPluginV2',
+    'quantum.plugins.nec.nec_plugin.NECPluginV2',
+    'quantum.plugins.ryu.ryu_quantum_plugin.RyuQuantumPluginV2',
 ]
 
 from alembic import op
@@ -50,17 +54,14 @@ def upgrade(active_plugin=None, options=None):
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('name', sa.String(length=255), nullable=True),
         sa.Column('description', sa.String(length=255), nullable=True),
-        sa.Column('external_id', sa.Integer(), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('external_id')
+        sa.PrimaryKeyConstraint('id')
     )
     op.create_table(
         'securitygrouprules',
         sa.Column('tenant_id', sa.String(length=255), nullable=True),
         sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('external_id', sa.Integer(), nullable=True),
         sa.Column('security_group_id', sa.String(length=36), nullable=False),
-        sa.Column('source_group_id', sa.String(length=36), nullable=True),
+        sa.Column('remote_group_id', sa.String(length=36), nullable=True),
         sa.Column('direction',
                   sa.Enum('ingress', 'egress',
                           name='securitygrouprules_direction'),
@@ -69,10 +70,10 @@ def upgrade(active_plugin=None, options=None):
         sa.Column('protocol', sa.String(length=40), nullable=True),
         sa.Column('port_range_min', sa.Integer(), nullable=True),
         sa.Column('port_range_max', sa.Integer(), nullable=True),
-        sa.Column('source_ip_prefix', sa.String(length=255), nullable=True),
+        sa.Column('remote_ip_prefix', sa.String(length=255), nullable=True),
         sa.ForeignKeyConstraint(['security_group_id'], ['securitygroups.id'],
                                 ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['source_group_id'], ['securitygroups.id'],
+        sa.ForeignKeyConstraint(['remote_group_id'], ['securitygroups.id'],
                                 ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
     )

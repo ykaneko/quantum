@@ -20,12 +20,13 @@
 
 from abc import abstractmethod
 
+from oslo.config import cfg
+
 from quantum.api import extensions
 from quantum.api.v2 import attributes as attr
 from quantum.api.v2 import base
 from quantum.common import exceptions as qexception
 from quantum import manager
-from quantum.openstack.common import cfg
 from quantum import quota
 
 
@@ -86,13 +87,15 @@ class RouterExternalGatewayInUseByFloatingIp(qexception.InUse):
                 "gateway to external network %(net_id)s is required by one or "
                 "more floating IPs.")
 
+ROUTERS = 'routers'
 
 # Attribute Map
 RESOURCE_ATTRIBUTE_MAP = {
-    'routers': {
+    ROUTERS: {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'name': {'allow_post': True, 'allow_put': True,
                  'validate': {'type:string': None},
                  'is_visible': True, 'default': ''},
@@ -112,7 +115,8 @@ RESOURCE_ATTRIBUTE_MAP = {
     'floatingips': {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'floating_ip_address': {'allow_post': False, 'allow_put': False,
                                 'validate': {'type:ip_address_or_none': None},
                                 'is_visible': True},
@@ -184,7 +188,9 @@ class L3(extensions.ExtensionDescriptor):
 
     @classmethod
     def get_resources(cls):
-        """ Returns Ext Resources """
+        """Returns Ext Resources."""
+        my_plurals = [(key, key[:-1]) for key in RESOURCE_ATTRIBUTE_MAP.keys()]
+        attr.PLURALS.update(dict(my_plurals))
         exts = []
         plugin = manager.QuantumManager.get_plugin()
         for resource_name in ['router', 'floatingip']:
@@ -198,21 +204,28 @@ class L3(extensions.ExtensionDescriptor):
 
             quota.QUOTAS.register_resource_by_name(resource_name)
 
-            controller = base.create_resource(collection_name,
-                                              resource_name,
-                                              plugin, params,
-                                              member_actions=member_actions)
+            controller = base.create_resource(
+                collection_name, resource_name, plugin, params,
+                member_actions=member_actions,
+                allow_pagination=cfg.CONF.allow_pagination,
+                allow_sorting=cfg.CONF.allow_sorting)
 
             ex = extensions.ResourceExtension(collection_name,
                                               controller,
-                                              member_actions=member_actions)
+                                              member_actions=member_actions,
+                                              attr_map=params)
             exts.append(ex)
 
         return exts
 
+    def update_attributes_map(self, attributes):
+        super(L3, self).update_attributes_map(
+            attributes, extension_attrs_map=RESOURCE_ATTRIBUTE_MAP)
+
     def get_extended_resources(self, version):
         if version == "2.0":
-            return EXTENDED_ATTRIBUTES_2_0
+            return dict(EXTENDED_ATTRIBUTES_2_0.items() +
+                        RESOURCE_ATTRIBUTE_MAP.items())
         else:
             return {}
 
@@ -236,7 +249,8 @@ class RouterPluginBase(object):
         pass
 
     @abstractmethod
-    def get_routers(self, context, filters=None, fields=None):
+    def get_routers(self, context, filters=None, fields=None,
+                    sorts=None, limit=None, marker=None, page_reverse=False):
         pass
 
     @abstractmethod
@@ -264,7 +278,9 @@ class RouterPluginBase(object):
         pass
 
     @abstractmethod
-    def get_floatingips(self, context, filters=None, fields=None):
+    def get_floatingips(self, context, filters=None, fields=None,
+                        sorts=None, limit=None, marker=None,
+                        page_reverse=False):
         pass
 
     def get_routers_count(self, context, filters=None):

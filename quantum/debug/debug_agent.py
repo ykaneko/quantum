@@ -19,37 +19,26 @@ import shlex
 import socket
 
 import netaddr
+from oslo.config import cfg
 
+from quantum.agent.common import config
 from quantum.agent.dhcp_agent import DictModel
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import utils
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 
 LOG = logging.getLogger(__name__)
 
-DEVICE_OWNER_PROBE = 'network:probe'
+DEVICE_OWNER_NETWORK_PROBE = 'network:probe'
+
+DEVICE_OWNER_COMPUTE_PROBE = 'compute:probe'
 
 
 class QuantumDebugAgent():
 
     OPTS = [
-        cfg.StrOpt('root_helper', default='sudo',
-                   help=_("Root helper application.")),
         # Needed for drivers
-        cfg.StrOpt('admin_user',
-                   help=_("Admin user")),
-        cfg.StrOpt('admin_password',
-                   help=_("Admin password")),
-        cfg.StrOpt('admin_tenant_name',
-                   help=_("Admin tenant name")),
-        cfg.StrOpt('auth_url',
-                   help=_("Authentication URL")),
-        cfg.StrOpt('auth_strategy', default='keystone',
-                   help=_("The type of authentication to use")),
-        cfg.StrOpt('auth_region',
-                   help=_("Authentication region")),
         cfg.BoolOpt('use_namespaces', default=True,
                     help=_("Use Linux network namespaces")),
         cfg.StrOpt('interface_driver',
@@ -62,27 +51,27 @@ class QuantumDebugAgent():
 
     def __init__(self, conf, client, driver):
         self.conf = conf
+        self.root_helper = config.get_root_helper(conf)
         self.client = client
         self.driver = driver
 
     def _get_namespace(self, port):
         return "qprobe-%s" % port.id
 
-    def create_probe(self, network_id):
+    def create_probe(self, network_id, device_owner='network'):
         network = self._get_network(network_id)
         bridge = None
         if network.external:
             bridge = self.conf.external_network_bridge
 
-        port = self._create_port(network)
+        port = self._create_port(network, device_owner)
         port.network = network
         interface_name = self.driver.get_device_name(port)
         namespace = None
         if self.conf.use_namespaces:
             namespace = self._get_namespace(port)
 
-        if ip_lib.device_exists(interface_name,
-                                self.conf.root_helper, namespace):
+        if ip_lib.device_exists(interface_name, self.root_helper, namespace):
             LOG.debug(_('Reusing existing device: %s.'), interface_name)
         else:
             self.driver.plug(network.id,
@@ -113,8 +102,10 @@ class QuantumDebugAgent():
         return network
 
     def clear_probe(self):
-        ports = self.client.list_ports(device_id=socket.gethostname(),
-                                       device_owner=DEVICE_OWNER_PROBE)
+        ports = self.client.list_ports(
+            device_id=socket.gethostname(),
+            device_owner=[DEVICE_OWNER_NETWORK_PROBE,
+                          DEVICE_OWNER_COMPUTE_PROBE])
         info = ports['ports']
         for port in info:
             self.delete_probe(port['id'])
@@ -125,7 +116,7 @@ class QuantumDebugAgent():
         bridge = None
         if network.external:
             bridge = self.conf.external_network_bridge
-        ip = ip_lib.IPWrapper(self.conf.root_helper)
+        ip = ip_lib.IPWrapper(self.root_helper)
         namespace = self._get_namespace(port)
         if self.conf.use_namespaces and ip.netns.exists(namespace):
             self.driver.unplug(self.driver.get_device_name(port),
@@ -133,7 +124,7 @@ class QuantumDebugAgent():
                                namespace=namespace)
             try:
                 ip.netns.delete(namespace)
-            except:
+            except Exception:
                 LOG.warn(_('Failed to delete namespace %s'), namespace)
         else:
             self.driver.unplug(self.driver.get_device_name(port),
@@ -141,7 +132,9 @@ class QuantumDebugAgent():
         self.client.delete_port(port.id)
 
     def list_probes(self):
-        ports = self.client.list_ports(device_owner=DEVICE_OWNER_PROBE)
+        ports = self.client.list_ports(
+            device_owner=[DEVICE_OWNER_NETWORK_PROBE,
+                          DEVICE_OWNER_COMPUTE_PROBE])
         info = ports['ports']
         for port in info:
             port['device_name'] = self.driver.get_device_name(DictModel(port))
@@ -149,7 +142,7 @@ class QuantumDebugAgent():
 
     def exec_command(self, port_id, command=None):
         port = DictModel(self.client.show_port(port_id)['port'])
-        ip = ip_lib.IPWrapper(self.conf.root_helper)
+        ip = ip_lib.IPWrapper(self.root_helper)
         namespace = self._get_namespace(port)
         if self.conf.use_namespaces:
             if not command:
@@ -162,7 +155,7 @@ class QuantumDebugAgent():
     def ensure_probe(self, network_id):
         ports = self.client.list_ports(network_id=network_id,
                                        device_id=socket.gethostname(),
-                                       device_owner=DEVICE_OWNER_PROBE)
+                                       device_owner=DEVICE_OWNER_NETWORK_PROBE)
         info = ports.get('ports', [])
         if info:
             return DictModel(info[0])
@@ -177,7 +170,7 @@ class QuantumDebugAgent():
         result = ""
         for port in ports:
             probe = self.ensure_probe(port['network_id'])
-            if port['device_owner'] == DEVICE_OWNER_PROBE:
+            if port['device_owner'] == DEVICE_OWNER_NETWORK_PROBE:
                 continue
             for fixed_ip in port['fixed_ips']:
                 address = fixed_ip['ip_address']
@@ -192,12 +185,12 @@ class QuantumDebugAgent():
                                                                   address))
         return result
 
-    def _create_port(self, network):
+    def _create_port(self, network, device_owner):
         body = dict(port=dict(
             admin_state_up=True,
             network_id=network.id,
             device_id='%s' % socket.gethostname(),
-            device_owner=DEVICE_OWNER_PROBE,
+            device_owner='%s:probe' % device_owner,
             tenant_id=network.tenant_id,
             fixed_ips=[dict(subnet_id=s.id) for s in network.subnets]))
         port_dict = self.client.create_port(body)['port']

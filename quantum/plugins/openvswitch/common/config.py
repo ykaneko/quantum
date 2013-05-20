@@ -14,7 +14,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
+
+from quantum.agent.common import config
+from quantum import scheduler
 
 
 DEFAULT_BRIDGE_MAPPINGS = []
@@ -55,10 +58,11 @@ agent_opts = [
     cfg.IntOpt('polling_interval', default=2,
                help=_("The number of seconds the agent will wait between "
                       "polling for local device changes.")),
-    cfg.StrOpt('root_helper', default='sudo',
-               help=_("Root helper application.")),
 ]
 
 
 cfg.CONF.register_opts(ovs_opts, "OVS")
 cfg.CONF.register_opts(agent_opts, "AGENT")
+config.register_agent_state_opts_helper(cfg.CONF)
+config.register_root_helper(cfg.CONF)
+cfg.CONF.register_opts(scheduler.AGENTS_SCHEDULER_OPTS)

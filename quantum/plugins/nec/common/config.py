@@ -15,9 +15,11 @@
 #    under the License.
 # @author: Ryota MIBU
 
-from quantum.openstack.common import cfg
-# import rpc config options
-from quantum.openstack.common import rpc
+from oslo.config import cfg
+
+from quantum.agent.common import config
+from quantum.openstack.common import rpc  # noqa
+from quantum import scheduler
 
 
 ovs_opts = [
@@ -29,8 +31,6 @@ agent_opts = [
     cfg.IntOpt('polling_interval', default=2,
                help=_("The number of seconds the agent will wait between "
                       "polling for local device changes.")),
-    cfg.StrOpt('root_helper', default='sudo',
-               help=_("Root helper application.")),
 ]
 
 ofc_opts = [
@@ -54,6 +54,9 @@ ofc_opts = [
 cfg.CONF.register_opts(ovs_opts, "OVS")
 cfg.CONF.register_opts(agent_opts, "AGENT")
 cfg.CONF.register_opts(ofc_opts, "OFC")
+config.register_agent_state_opts_helper(cfg.CONF)
+config.register_root_helper(cfg.CONF)
+cfg.CONF.register_opts(scheduler.AGENTS_SCHEDULER_OPTS)
 
 # shortcuts
 CONF = cfg.CONF

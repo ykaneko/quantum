@@ -22,11 +22,12 @@ import urlparse
 
 import eventlet
 import httplib2
+from oslo.config import cfg
 import webob
 
 from quantum.agent.linux import daemon
 from quantum.common import config
-from quantum.openstack.common import cfg
+from quantum.common import utils
 from quantum.openstack.common import log as logging
 from quantum import wsgi
 
@@ -57,8 +58,8 @@ class UnixDomainHTTPConnection(httplib.HTTPConnection):
 class NetworkMetadataProxyHandler(object):
     """Proxy AF_INET metadata request through Unix Domain socket.
 
-       The Unix domain socket allows the proxy access resource that are not
-       accessible within the isolated tenant context.
+    The Unix domain socket allows the proxy access resource that are not
+    accessible within the isolated tenant context.
     """
 
     def __init__(self, network_id=None, router_id=None):
@@ -74,15 +75,18 @@ class NetworkMetadataProxyHandler(object):
         LOG.debug(_("Request: %s"), req)
         try:
             return self._proxy_request(req.remote_addr,
+                                       req.method,
                                        req.path_info,
-                                       req.query_string)
-        except Exception, e:
+                                       req.query_string,
+                                       req.body)
+        except Exception:
             LOG.exception(_("Unexpected error."))
             msg = _('An unknown error has occurred. '
                     'Please try your request again.')
             return webob.exc.HTTPInternalServerError(explanation=unicode(msg))
 
-    def _proxy_request(self, remote_address, path_info, query_string):
+    def _proxy_request(self, remote_address, method, path_info,
+                       query_string, body):
         headers = {
             'X-Forwarded-For': remote_address,
         }
@@ -102,7 +106,9 @@ class NetworkMetadataProxyHandler(object):
         h = httplib2.Http()
         resp, content = h.request(
             url,
+            method=method,
             headers=headers,
+            body=body,
             connection_type=UnixDomainHTTPConnection)
 
         if resp.status == 200:
@@ -111,6 +117,8 @@ class NetworkMetadataProxyHandler(object):
             return content
         elif resp.status == 404:
             return webob.exc.HTTPNotFound()
+        elif resp.status == 409:
+            return webob.exc.HTTPConflict()
         elif resp.status == 500:
             msg = _(
                 'Remote metadata server experienced an internal server error.'
@@ -123,7 +131,8 @@ class NetworkMetadataProxyHandler(object):
 
 class ProxyDaemon(daemon.Daemon):
     def __init__(self, pidfile, port, network_id=None, router_id=None):
-        super(ProxyDaemon, self).__init__(pidfile)
+        uuid = network_id or router_id
+        super(ProxyDaemon, self).__init__(pidfile, uuid=uuid)
         self.network_id = network_id
         self.router_id = router_id
         self.port = port
@@ -151,9 +160,10 @@ def main():
     ]
 
     cfg.CONF.register_cli_opts(opts)
-    cfg.CONF(project='quantum')
+    # Don't get the default configuration file
+    cfg.CONF(project='quantum', default_config_files=[])
     config.setup_logging(cfg.CONF)
-
+    utils.log_opt_values(LOG)
     proxy = ProxyDaemon(cfg.CONF.pid_file,
                         cfg.CONF.metadata_port,
                         network_id=cfg.CONF.network_id,

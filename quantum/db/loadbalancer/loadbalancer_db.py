@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright 2013 OpenStack LLC.  All rights reserved
+# Copyright 2013 OpenStack Foundation.  All rights reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -16,29 +16,27 @@
 #
 
 import sqlalchemy as sa
+from sqlalchemy import exc as sa_exc
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
-from sqlalchemy.sql import expression as expr
-import webob.exc as w_exc
 
 from quantum.api.v2 import attributes
 from quantum.common import exceptions as q_exc
-from quantum.db import db_base_plugin_v2
 from quantum.db import model_base
 from quantum.db import models_v2
 from quantum.extensions import loadbalancer
 from quantum.extensions.loadbalancer import LoadBalancerPluginBase
-from quantum.openstack.common import cfg
+from quantum import manager
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import uuidutils
 from quantum.plugins.common import constants
-from quantum import policy
 
 
 LOG = logging.getLogger(__name__)
 
 
 class SessionPersistence(model_base.BASEV2):
+
     vip_id = sa.Column(sa.String(36),
                        sa.ForeignKey("vips.id"),
                        primary_key=True)
@@ -51,7 +49,8 @@ class SessionPersistence(model_base.BASEV2):
 
 
 class PoolStatistics(model_base.BASEV2):
-    """Represents pool statistics """
+    """Represents pool statistics."""
+
     pool_id = sa.Column(sa.String(36), sa.ForeignKey("pools.id"),
                         primary_key=True)
     bytes_in = sa.Column(sa.Integer, nullable=False)
@@ -62,14 +61,14 @@ class PoolStatistics(model_base.BASEV2):
 
 class Vip(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     """Represents a v2 quantum loadbalancer vip."""
+
     name = sa.Column(sa.String(255))
     description = sa.Column(sa.String(255))
-    subnet_id = sa.Column(sa.String(36), nullable=False)
-    address = sa.Column(sa.String(64))
-    port = sa.Column(sa.Integer, nullable=False)
-    protocol = sa.Column(sa.Enum("HTTP", "HTTPS", name="vip_protocol"),
+    port_id = sa.Column(sa.String(36), sa.ForeignKey('ports.id'))
+    protocol_port = sa.Column(sa.Integer, nullable=False)
+    protocol = sa.Column(sa.Enum("HTTP", "HTTPS", "TCP", name="lb_protocols"),
                          nullable=False)
-    pool_id = sa.Column(sa.String(36), nullable=False)
+    pool_id = sa.Column(sa.String(36), nullable=False, unique=True)
     session_persistence = orm.relationship(SessionPersistence,
                                            uselist=False,
                                            backref="vips",
@@ -77,14 +76,16 @@ class Vip(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     status = sa.Column(sa.String(16), nullable=False)
     admin_state_up = sa.Column(sa.Boolean(), nullable=False)
     connection_limit = sa.Column(sa.Integer)
+    port = orm.relationship(models_v2.Port)
 
 
 class Member(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     """Represents a v2 quantum loadbalancer member."""
+
     pool_id = sa.Column(sa.String(36), sa.ForeignKey("pools.id"),
                         nullable=False)
     address = sa.Column(sa.String(64), nullable=False)
-    port = sa.Column(sa.Integer, nullable=False)
+    protocol_port = sa.Column(sa.Integer, nullable=False)
     weight = sa.Column(sa.Integer, nullable=False)
     status = sa.Column(sa.String(16), nullable=False)
     admin_state_up = sa.Column(sa.Boolean(), nullable=False)
@@ -92,11 +93,13 @@ class Member(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
 
 class Pool(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     """Represents a v2 quantum loadbalancer pool."""
+
     vip_id = sa.Column(sa.String(36), sa.ForeignKey("vips.id"))
     name = sa.Column(sa.String(255))
     description = sa.Column(sa.String(255))
     subnet_id = sa.Column(sa.String(36), nullable=False)
-    protocol = sa.Column(sa.String(64), nullable=False)
+    protocol = sa.Column(sa.Enum("HTTP", "HTTPS", "TCP", name="lb_protocols"),
+                         nullable=False)
     lb_method = sa.Column(sa.Enum("ROUND_ROBIN",
                                   "LEAST_CONNECTIONS",
                                   "SOURCE_IP",
@@ -112,10 +115,12 @@ class Pool(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
                                cascade="all, delete-orphan")
     monitors = orm.relationship("PoolMonitorAssociation", backref="pools",
                                 cascade="all, delete-orphan")
+    vip = orm.relationship(Vip, backref='pool')
 
 
 class HealthMonitor(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     """Represents a v2 quantum loadbalancer healthmonitor."""
+
     type = sa.Column(sa.Enum("PING", "TCP", "HTTP", "HTTPS",
                              name="healthmontiors_type"),
                      nullable=False)
@@ -128,27 +133,34 @@ class HealthMonitor(model_base.BASEV2, models_v2.HasId, models_v2.HasTenant):
     status = sa.Column(sa.String(16), nullable=False)
     admin_state_up = sa.Column(sa.Boolean(), nullable=False)
 
+    pools = orm.relationship(
+        "PoolMonitorAssociation",
+        backref="healthmonitor",
+        cascade="all"
+    )
+
 
 class PoolMonitorAssociation(model_base.BASEV2):
-    """
-    Represents the many-to-many association between pool and
-    healthMonitor classes
-    """
+    """Many-to-many association between pool and healthMonitor classes."""
+
     pool_id = sa.Column(sa.String(36),
                         sa.ForeignKey("pools.id"),
                         primary_key=True)
     monitor_id = sa.Column(sa.String(36),
                            sa.ForeignKey("healthmonitors.id"),
                            primary_key=True)
-    monitor = orm.relationship("HealthMonitor",
-                               backref="pools_poolmonitorassociations")
 
 
 class LoadBalancerPluginDb(LoadBalancerPluginBase):
+    """Wraps loadbalancer with SQLAlchemy models.
+
+    A class that wraps the implementation of the Quantum loadbalancer
+    plugin database access interface using SQLAlchemy models.
     """
-    A class that wraps the implementation of the Quantum
-    loadbalancer plugin database access interface using SQLAlchemy models.
-    """
+
+    @property
+    def _core_plugin(self):
+        return manager.QuantumManager.get_plugin()
 
     # TODO(lcui):
     # A set of internal facility methods are borrowed from QuantumDbPluginV2
@@ -186,9 +198,10 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
         return collection
 
     def _get_collection(self, context, model, dict_func, filters=None,
-                        fields=None):
+                        fields=None, sorts=None, limit=None, marker_obj=None,
+                        page_reverse=False):
         query = self._get_collection_query(context, model, filters)
-        return [dict_func(c, fields) for c in query.all()]
+        return [dict_func(c, fields) for c in query]
 
     def _get_collection_count(self, context, model, filters=None):
         return self._get_collection_query(context, model, filters).count()
@@ -232,40 +245,81 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
                 raise
         return r
 
+    def assert_modification_allowed(self, obj):
+        status = getattr(obj, 'status', None)
+
+        if status == constants.PENDING_DELETE:
+            raise loadbalancer.StateInvalid(id=id, state=status)
+
     ########################################################
     # VIP DB access
     def _make_vip_dict(self, vip, fields=None):
+        fixed_ip = (vip.port.fixed_ips or [{}])[0]
+
         res = {'id': vip['id'],
                'tenant_id': vip['tenant_id'],
                'name': vip['name'],
                'description': vip['description'],
-               'subnet_id': vip['subnet_id'],
-               'address': vip['address'],
-               'port': vip['port'],
+               'subnet_id': fixed_ip.get('subnet_id'),
+               'address': fixed_ip.get('ip_address'),
+               'port_id': vip['port_id'],
+               'protocol_port': vip['protocol_port'],
                'protocol': vip['protocol'],
                'pool_id': vip['pool_id'],
                'connection_limit': vip['connection_limit'],
                'admin_state_up': vip['admin_state_up'],
                'status': vip['status']}
+
         if vip['session_persistence']:
-            res['session_persistence'] = {
-                'type': vip['session_persistence']['type'],
-                'cookie_name': vip['session_persistence']['cookie_name']
+            s_p = {
+                'type': vip['session_persistence']['type']
             }
+
+            if vip['session_persistence']['type'] == 'APP_COOKIE':
+                s_p['cookie_name'] = vip['session_persistence']['cookie_name']
+
+            res['session_persistence'] = s_p
+
         return self._fields(res, fields)
 
-    def _update_pool_vip_info(self, context, pool_id, vip_id):
-        pool_db = self._get_resource(context, Pool, pool_id)
-        with context.session.begin(subtransactions=True):
-            pool_db.update({'vip_id': vip_id})
+    def _check_session_persistence_info(self, info):
+        """Performs sanity check on session persistence info.
 
-    def _update_vip_session_persistence_info(self, context, vip_id, info):
+        :param info: Session persistence info
+        """
+        if info['type'] == 'APP_COOKIE':
+            if not info.get('cookie_name'):
+                raise ValueError(_("'cookie_name' should be specified for this"
+                                   " type of session persistence."))
+        else:
+            if 'cookie_name' in info:
+                raise ValueError(_("'cookie_name' is not allowed for this type"
+                                   " of session persistence"))
+
+    def _create_session_persistence_db(self, session_info, vip_id):
+        self._check_session_persistence_info(session_info)
+
+        sesspersist_db = SessionPersistence(
+            type=session_info['type'],
+            cookie_name=session_info.get('cookie_name'),
+            vip_id=vip_id)
+        return sesspersist_db
+
+    def _update_vip_session_persistence(self, context, vip_id, info):
+        self._check_session_persistence_info(info)
+
         vip = self._get_resource(context, Vip, vip_id)
 
         with context.session.begin(subtransactions=True):
             # Update sessionPersistence table
             sess_qry = context.session.query(SessionPersistence)
             sesspersist_db = sess_qry.filter_by(vip_id=vip_id).first()
+
+            # Insert a None cookie_info if it is not present to overwrite an
+            # an existing value in the database.
+            if 'cookie_name' not in info:
+                info['cookie_name'] = None
+
             if sesspersist_db:
                 sesspersist_db.update(info)
             else:
@@ -278,68 +332,136 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
                 vip.session_persistence = sesspersist_db
             context.session.add(vip)
 
-    def _delete_sessionpersistence(self, context, id):
+    def _delete_session_persistence(self, context, vip_id):
         with context.session.begin(subtransactions=True):
             sess_qry = context.session.query(SessionPersistence)
-            sess_qry.filter_by(vip_id=id).delete()
+            sess_qry.filter_by(vip_id=vip_id).delete()
+
+    def _create_port_for_vip(self, context, vip_db, subnet_id, ip_address):
+            # resolve subnet and create port
+            subnet = self._core_plugin.get_subnet(context, subnet_id)
+            fixed_ip = {'subnet_id': subnet['id']}
+            if ip_address and ip_address != attributes.ATTR_NOT_SPECIFIED:
+                fixed_ip['ip_address'] = ip_address
+
+            port_data = {
+                'tenant_id': vip_db.tenant_id,
+                'name': 'vip-' + vip_db.id,
+                'network_id': subnet['network_id'],
+                'mac_address': attributes.ATTR_NOT_SPECIFIED,
+                'admin_state_up': False,
+                'device_id': '',
+                'device_owner': '',
+                'fixed_ips': [fixed_ip]
+            }
+
+            port = self._core_plugin.create_port(context, {'port': port_data})
+            vip_db.port_id = port['id']
 
     def create_vip(self, context, vip):
         v = vip['vip']
         tenant_id = self._get_tenant_id_for_create(context, v)
 
         with context.session.begin(subtransactions=True):
-            if v['address'] is attributes.ATTR_NOT_SPECIFIED:
-                address = None
+            if v['pool_id']:
+                pool = self._get_resource(context, Pool, v['pool_id'])
+                # validate that the pool has same tenant
+                if pool['tenant_id'] != tenant_id:
+                    raise q_exc.NotAuthorized()
+                # validate that the pool has same protocol
+                if pool['protocol'] != v['protocol']:
+                    raise loadbalancer.ProtocolMismatch(
+                        vip_proto=v['protocol'],
+                        pool_proto=pool['protocol'])
             else:
-                address = v['address']
+                pool = None
+
             vip_db = Vip(id=uuidutils.generate_uuid(),
                          tenant_id=tenant_id,
                          name=v['name'],
                          description=v['description'],
-                         subnet_id=v['subnet_id'],
-                         address=address,
-                         port=v['port'],
+                         port_id=None,
+                         protocol_port=v['protocol_port'],
                          protocol=v['protocol'],
                          pool_id=v['pool_id'],
                          connection_limit=v['connection_limit'],
                          admin_state_up=v['admin_state_up'],
                          status=constants.PENDING_CREATE)
-            vip_id = vip_db['id']
 
-            sessionInfo = v['session_persistence']
-            if sessionInfo:
-                has_session_persistence = True
-                sesspersist_db = SessionPersistence(
-                    type=sessionInfo['type'],
-                    cookie_name=sessionInfo['cookie_name'],
-                    vip_id=vip_id)
-                vip_db.session_persistence = sesspersist_db
+            session_info = v['session_persistence']
 
-            context.session.add(vip_db)
-            self._update_pool_vip_info(context, v['pool_id'], vip_id)
+            if session_info:
+                s_p = self._create_session_persistence_db(
+                    session_info,
+                    vip_db['id'])
+                vip_db.session_persistence = s_p
 
-        vip_db = self._get_resource(context, Vip, vip_id)
+            try:
+                context.session.add(vip_db)
+                context.session.flush()
+            except sa_exc.IntegrityError:
+                raise loadbalancer.VipExists(pool_id=v['pool_id'])
+
+            # create a port to reserve address for IPAM
+            self._create_port_for_vip(
+                context,
+                vip_db,
+                v['subnet_id'],
+                v.get('address')
+            )
+
+            if pool:
+                pool['vip_id'] = vip_db['id']
+
         return self._make_vip_dict(vip_db)
 
     def update_vip(self, context, id, vip):
         v = vip['vip']
 
-        sesspersist_info = v.pop('session_persistence', None)
+        sess_persist = v.pop('session_persistence', None)
         with context.session.begin(subtransactions=True):
-            if sesspersist_info:
-                self._update_vip_session_persistence_info(context,
-                                                          id,
-                                                          sesspersist_info)
-
             vip_db = self._get_resource(context, Vip, id)
-            old_pool_id = vip_db['pool_id']
+
+            self.assert_modification_allowed(vip_db)
+
+            if sess_persist:
+                self._update_vip_session_persistence(context, id, sess_persist)
+            else:
+                self._delete_session_persistence(context, id)
+
             if v:
-                vip_db.update(v)
-                # If the pool_id is changed, we need to update
-                # the associated pools
-                if 'pool_id' in v:
-                    self._update_pool_vip_info(context, old_pool_id, None)
-                    self._update_pool_vip_info(context, v['pool_id'], id)
+                try:
+                    # in case new pool already has a vip
+                    # update will raise integrity error at first query
+                    old_pool_id = vip_db['pool_id']
+                    vip_db.update(v)
+                    # If the pool_id is changed, we need to update
+                    # the associated pools
+                    if 'pool_id' in v:
+                        new_pool = self._get_resource(context, Pool,
+                                                      v['pool_id'])
+                        self.assert_modification_allowed(new_pool)
+
+                        # check that the pool matches the tenant_id
+                        if new_pool['tenant_id'] != vip_db['tenant_id']:
+                            raise q_exc.NotAuthorized()
+                        # validate that the pool has same protocol
+                        if new_pool['protocol'] != vip_db['protocol']:
+                            raise loadbalancer.ProtocolMismatch(
+                                vip_proto=vip_db['protocol'],
+                                pool_proto=new_pool['protocol'])
+
+                        if old_pool_id:
+                            old_pool = self._get_resource(
+                                context,
+                                Pool,
+                                old_pool_id
+                            )
+                            old_pool['vip_id'] = None
+
+                        new_pool['vip_id'] = vip_db['id']
+                except sa_exc.IntegrityError:
+                    raise loadbalancer.VipExists(pool_id=v['pool_id'])
 
         return self._make_vip_dict(vip_db)
 
@@ -347,9 +469,13 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
         with context.session.begin(subtransactions=True):
             vip = self._get_resource(context, Vip, id)
             qry = context.session.query(Pool)
-            for pool in qry.filter_by(vip_id=id).all():
+            for pool in qry.filter_by(vip_id=id):
                 pool.update({"vip_id": None})
+
             context.session.delete(vip)
+            if vip.port:  # this is a Quantum port
+                self._core_plugin.delete_port(context, vip.port.id)
+            context.session.flush()
 
     def get_vip(self, context, id, fields=None):
         vip = self._get_resource(context, Vip, id)
@@ -362,7 +488,7 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
 
     ########################################################
     # Pool DB access
-    def _make_pool_dict(self, context, pool, fields=None):
+    def _make_pool_dict(self, pool, fields=None):
         res = {'id': pool['id'],
                'tenant_id': pool['tenant_id'],
                'name': pool['name'],
@@ -382,16 +508,6 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
             monitor['monitor_id'] for monitor in pool['monitors']]
 
         return self._fields(res, fields)
-
-    def _update_pool_member_info(self, context, pool_id, membersInfo):
-        with context.session.begin(subtransactions=True):
-            member_qry = context.session.query(Member)
-            for member_id in membersInfo:
-                try:
-                    member = member_qry.filter_by(id=member_id).one()
-                    member.update({'pool_id': pool_id})
-                except exc.NoResultFound:
-                    raise loadbalancer.MemberNotFound(member_id=member_id)
 
     def _create_pool_stats(self, context, pool_id):
         # This is internal method to add pool statistics. It won't
@@ -434,17 +550,18 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
             context.session.add(pool_db)
 
         pool_db = self._get_resource(context, Pool, pool_db['id'])
-        return self._make_pool_dict(context, pool_db)
+        return self._make_pool_dict(pool_db)
 
     def update_pool(self, context, id, pool):
-        v = pool['pool']
+        p = pool['pool']
 
         with context.session.begin(subtransactions=True):
             pool_db = self._get_resource(context, Pool, id)
-            if v:
-                pool_db.update(v)
+            self.assert_modification_allowed(pool_db)
+            if p:
+                pool_db.update(p)
 
-        return self._make_pool_dict(context, pool_db)
+        return self._make_pool_dict(pool_db)
 
     def delete_pool(self, context, id):
         # Check if the pool is in use
@@ -459,15 +576,15 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
 
     def get_pool(self, context, id, fields=None):
         pool = self._get_resource(context, Pool, id)
-        return self._make_pool_dict(context, pool, fields)
+        return self._make_pool_dict(pool, fields)
 
     def get_pools(self, context, filters=None, fields=None):
         collection = self._model_query(context, Pool)
         collection = self._apply_filters_to_query(collection, Pool, filters)
-        return [self._make_pool_dict(context, c, fields)
-                for c in collection.all()]
+        return [self._make_pool_dict(c, fields)
+                for c in collection]
 
-    def get_stats(self, context, pool_id):
+    def stats(self, context, pool_id):
         with context.session.begin(subtransactions=True):
             pool_qry = context.session.query(Pool)
             try:
@@ -485,12 +602,6 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
     def create_pool_health_monitor(self, context, health_monitor, pool_id):
         monitor_id = health_monitor['health_monitor']['id']
         with context.session.begin(subtransactions=True):
-            monitor_qry = context.session.query(HealthMonitor)
-            try:
-                monitor = monitor_qry.filter_by(id=monitor_id).one()
-                monitor.update({'pool_id': pool_id})
-            except exc.NoResultFound:
-                raise loadbalancer.HealthMonitorNotFound(monitor_id=monitor_id)
             try:
                 qry = context.session.query(Pool)
                 pool = qry.filter_by(id=pool_id).one()
@@ -499,17 +610,8 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
 
             assoc = PoolMonitorAssociation(pool_id=pool_id,
                                            monitor_id=monitor_id)
-            assoc.monitor = monitor
             pool.monitors.append(assoc)
-
-        monitors = []
-        try:
-            qry = context.session.query(Pool)
-            pool = qry.filter_by(id=pool_id).one()
-            for monitor in pool['monitors']:
-                monitors.append(monitor['monitor_id'])
-        except exc.NoResultFound:
-            pass
+            monitors = [monitor['monitor_id'] for monitor in pool['monitors']]
 
         res = {"health_monitor": monitors}
         return res
@@ -530,6 +632,7 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
                 raise loadbalancer.HealthMonitorNotFound(monitor_id=id)
 
     def get_pool_health_monitor(self, context, id, pool_id, fields=None):
+        # TODO(markmcclain) look into why pool_id is ignored
         healthmonitor = self._get_resource(context, HealthMonitor, id)
         return self._make_health_monitor_dict(healthmonitor, fields)
 
@@ -540,7 +643,7 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
                'tenant_id': member['tenant_id'],
                'pool_id': member['pool_id'],
                'address': member['address'],
-               'port': member['port'],
+               'protocol_port': member['protocol_port'],
                'weight': member['weight'],
                'admin_state_up': member['admin_state_up'],
                'status': member['status']}
@@ -551,10 +654,9 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
         tenant_id = self._get_tenant_id_for_create(context, v)
 
         with context.session.begin(subtransactions=True):
-            pool = None
             try:
                 qry = context.session.query(Pool)
-                pool = qry.filter_by(id=v['pool_id']).one()
+                qry.filter_by(id=v['pool_id']).one()
             except exc.NoResultFound:
                 raise loadbalancer.PoolNotFound(pool_id=v['pool_id'])
 
@@ -562,7 +664,7 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
                                tenant_id=tenant_id,
                                pool_id=v['pool_id'],
                                address=v['address'],
-                               port=v['port'],
+                               protocol_port=v['protocol_port'],
                                weight=v['weight'],
                                admin_state_up=v['admin_state_up'],
                                status=constants.PENDING_CREATE)
@@ -574,7 +676,7 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
         v = member['member']
         with context.session.begin(subtransactions=True):
             member_db = self._get_resource(context, Member, id)
-            old_pool_id = member_db['pool_id']
+            self.assert_modification_allowed(member_db)
             if v:
                 member_db.update(v)
 
@@ -635,20 +737,13 @@ class LoadBalancerPluginDb(LoadBalancerPluginBase):
         v = health_monitor['health_monitor']
         with context.session.begin(subtransactions=True):
             monitor_db = self._get_resource(context, HealthMonitor, id)
+            self.assert_modification_allowed(monitor_db)
             if v:
                 monitor_db.update(v)
         return self._make_health_monitor_dict(monitor_db)
 
     def delete_health_monitor(self, context, id):
         with context.session.begin(subtransactions=True):
-            assoc_qry = context.session.query(PoolMonitorAssociation)
-            pool_qry = context.session.query(Pool)
-            for assoc in assoc_qry.filter_by(monitor_id=id).all():
-                try:
-                    pool = pool_qry.filter_by(id=assoc['pool_id']).one()
-                except exc.NoResultFound:
-                    raise loadbalancer.PoolNotFound(pool_id=pool['id'])
-                pool.monitors.remove(assoc)
             monitor_db = self._get_resource(context, HealthMonitor, id)
             context.session.delete(monitor_db)
 

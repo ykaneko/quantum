@@ -16,18 +16,37 @@
 #    under the License.
 #
 
-from quantum.agent.linux import iptables_firewall
-from quantum.agent.linux import iptables_manager
+from oslo.config import cfg
+
 from quantum.common import topics
+from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 SG_RPC_VERSION = "1.1"
 
+security_group_opts = [
+    cfg.StrOpt(
+        'firewall_driver',
+        default='quantum.agent.firewall.NoopFirewallDriver')
+]
+cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
+
+
+def is_firewall_enabled():
+    return (cfg.CONF.SECURITYGROUP.firewall_driver !=
+            'quantum.agent.firewall.NoopFirewallDriver')
+
+
+def disable_security_group_extension_if_noop_driver(
+    supported_extension_aliases):
+    if not is_firewall_enabled():
+        LOG.debug(_('Disabled security-group extension.'))
+        supported_extension_aliases.remove('security-group')
+
 
 class SecurityGroupServerRpcApiMixin(object):
-    """A mix-in that enable SecurityGroup support in plugin rpc
-    """
+    """A mix-in that enable SecurityGroup support in plugin rpc."""
     def security_group_rules_for_devices(self, context, devices):
         LOG.debug(_("Get security group rules "
                     "for devices via rpc %r"), devices)
@@ -42,33 +61,33 @@ class SecurityGroupAgentRpcCallbackMixin(object):
     """A mix-in that enable SecurityGroup agent
     support in agent implementations.
     """
+    #mix-in object should be have sg_agent
+    sg_agent = None
 
     def security_groups_rule_updated(self, context, **kwargs):
-        """ callback for security group rule update
+        """Callback for security group rule update.
 
         :param security_groups: list of updated security_groups
         """
         security_groups = kwargs.get('security_groups', [])
         LOG.debug(
             _("Security group rule updated on remote: %s"), security_groups)
-        self.agent.security_groups_rule_updated(security_groups)
+        self.sg_agent.security_groups_rule_updated(security_groups)
 
     def security_groups_member_updated(self, context, **kwargs):
-        """ callback for security group member update
+        """Callback for security group member update.
 
         :param security_groups: list of updated security_groups
         """
         security_groups = kwargs.get('security_groups', [])
         LOG.debug(
             _("Security group member updated on remote: %s"), security_groups)
-        self.agent.security_groups_member_updated(security_groups)
+        self.sg_agent.security_groups_member_updated(security_groups)
 
     def security_groups_provider_updated(self, context, **kwargs):
-        """ callback for security group provider update
-
-        """
+        """Callback for security group provider update."""
         LOG.debug(_("Provider rule updated"))
-        self.agent.security_groups_provider_updated()
+        self.sg_agent.security_groups_provider_updated()
 
 
 class SecurityGroupAgentRpcMixin(object):
@@ -77,11 +96,9 @@ class SecurityGroupAgentRpcMixin(object):
     """
 
     def init_firewall(self):
-        LOG.debug(_("Init firewall settings"))
-        ip_manager = iptables_manager.IptablesManager(
-            root_helper=self.root_helper,
-            use_ipv6=True)
-        self.firewall = iptables_firewall.IptablesFirewallDriver(ip_manager)
+        firewall_driver = cfg.CONF.SECURITYGROUP.firewall_driver
+        LOG.debug(_("Init firewall settings (driver=%s)"), firewall_driver)
+        self.firewall = importutils.import_object(firewall_driver)
 
     def prepare_devices_filter(self, device_ids):
         if not device_ids:
@@ -152,7 +169,7 @@ class SecurityGroupAgentRpcApiMixin(object):
                                      topics.UPDATE)
 
     def security_groups_rule_updated(self, context, security_groups):
-        """ notify rule updated security groups """
+        """Notify rule updated security groups."""
         if not security_groups:
             return
         self.fanout_cast(context,
@@ -162,7 +179,7 @@ class SecurityGroupAgentRpcApiMixin(object):
                          topic=self._get_security_group_topic())
 
     def security_groups_member_updated(self, context, security_groups):
-        """ notify member updated security groups """
+        """Notify member updated security groups."""
         if not security_groups:
             return
         self.fanout_cast(context,
@@ -172,7 +189,7 @@ class SecurityGroupAgentRpcApiMixin(object):
                          topic=self._get_security_group_topic())
 
     def security_groups_provider_updated(self, context):
-        """ notify provider updated security groups """
+        """Notify provider updated security groups."""
         self.fanout_cast(context,
                          self.make_msg('security_groups_provider_updated'),
                          version=SG_RPC_VERSION,

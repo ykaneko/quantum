@@ -24,11 +24,12 @@ import urlparse
 
 import eventlet
 import httplib2
+from oslo.config import cfg
 from quantumclient.v2_0 import client
 import webob
 
 from quantum.common import config
-from quantum.openstack.common import cfg
+from quantum.common import utils
 from quantum.openstack.common import log as logging
 from quantum import wsgi
 
@@ -42,7 +43,8 @@ class MetadataProxyHandler(object):
         cfg.StrOpt('admin_user',
                    help=_("Admin user")),
         cfg.StrOpt('admin_password',
-                   help=_("Admin password")),
+                   help=_("Admin password"),
+                   secret=True),
         cfg.StrOpt('admin_tenant_name',
                    help=_("Admin tenant name")),
         cfg.StrOpt('auth_url',
@@ -58,20 +60,26 @@ class MetadataProxyHandler(object):
                    help=_("TCP Port used by Nova metadata server.")),
         cfg.StrOpt('metadata_proxy_shared_secret',
                    default='',
-                   help=_('Shared secret to sign instance-id request'))
+                   help=_('Shared secret to sign instance-id request'),
+                   secret=True)
     ]
 
     def __init__(self, conf):
         self.conf = conf
+        self.auth_info = {}
 
-        self.qclient = client.Client(
+    def _get_quantum_client(self):
+        qclient = client.Client(
             username=self.conf.admin_user,
             password=self.conf.admin_password,
             tenant_name=self.conf.admin_tenant_name,
             auth_url=self.conf.auth_url,
             auth_strategy=self.conf.auth_strategy,
-            region_name=self.conf.auth_region
+            region_name=self.conf.auth_region,
+            auth_token=self.auth_info.get('auth_token'),
+            endpoint_url=self.auth_info.get('endpoint_url'),
         )
+        return qclient
 
     @webob.dec.wsgify(RequestClass=wsgi.Request)
     def __call__(self, req):
@@ -84,13 +92,15 @@ class MetadataProxyHandler(object):
             else:
                 return webob.exc.HTTPNotFound()
 
-        except Exception, e:
+        except Exception:
             LOG.exception(_("Unexpected error."))
             msg = _('An unknown error has occurred. '
                     'Please try your request again.')
             return webob.exc.HTTPInternalServerError(explanation=unicode(msg))
 
     def _get_instance_id(self, req):
+        qclient = self._get_quantum_client()
+
         remote_address = req.headers.get('X-Forwarded-For')
         network_id = req.headers.get('X-Quantum-Network-ID')
         router_id = req.headers.get('X-Quantum-Router-ID')
@@ -98,15 +108,17 @@ class MetadataProxyHandler(object):
         if network_id:
             networks = [network_id]
         else:
-            internal_ports = self.qclient.list_ports(
+            internal_ports = qclient.list_ports(
                 device_id=router_id,
                 device_owner=DEVICE_OWNER_ROUTER_INTF)['ports']
 
             networks = [p['network_id'] for p in internal_ports]
 
-        ports = self.qclient.list_ports(
+        ports = qclient.list_ports(
             network_id=networks,
             fixed_ips=['ip_address=%s' % remote_address])['ports']
+
+        self.auth_info = qclient.get_auth_info()
 
         if len(ports) == 1:
             return ports[0]['device_id']
@@ -127,7 +139,8 @@ class MetadataProxyHandler(object):
             ''))
 
         h = httplib2.Http()
-        resp, content = h.request(url, headers=headers)
+        resp, content = h.request(url, method=req.method, headers=headers,
+                                  body=req.body)
 
         if resp.status == 200:
             LOG.debug(str(resp))
@@ -141,6 +154,8 @@ class MetadataProxyHandler(object):
             return webob.exc.HTTPForbidden()
         elif resp.status == 404:
             return webob.exc.HTTPNotFound()
+        elif resp.status == 409:
+            return webob.exc.HTTPConflict()
         elif resp.status == 500:
             msg = _(
                 'Remote metadata server experienced an internal server error.'
@@ -215,6 +230,6 @@ def main():
     cfg.CONF.register_opts(MetadataProxyHandler.OPTS)
     cfg.CONF(project='quantum')
     config.setup_logging(cfg.CONF)
-
+    utils.log_opt_values(LOG)
     proxy = UnixDomainMetadataProxy(cfg.CONF)
     proxy.run()

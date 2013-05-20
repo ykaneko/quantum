@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-#    Copyright 2011 OpenStack LLC
+#    Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -14,8 +14,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.openstack.common import version as common_version
+import pbr.version
 
-NEXT_VERSION = '2013.1'
-version_info = common_version.VersionInfo('quantum',
-                                          pre_version=NEXT_VERSION)
+version_info = pbr.version.VersionInfo('quantum')

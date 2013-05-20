@@ -1,5 +1,5 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -48,9 +48,10 @@ class StubPlugin(object):
 
 
 class ExtensionExpectingPluginInterface(StubExtension):
-    """
+    """Expect plugin to implement all methods in StubPluginInterface.
+
     This extension expects plugin to implement all the methods defined
-    in StubPluginInterface
+    in StubPluginInterface.
     """
 
     def get_plugin_interface(self):

@@ -16,11 +16,11 @@
 #    under the License.
 
 from contextlib import nested
+
 import mock
 from mock import call
-import unittest2 as unittest
-
 import mox
+from oslo.config import cfg
 
 from quantum.agent import firewall as firewall_base
 from quantum.agent.linux import iptables_manager
@@ -28,7 +28,9 @@ from quantum.agent import rpc as agent_rpc
 from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum import context
 from quantum.db import securitygroups_rpc_base as sg_db_rpc
+from quantum.extensions import securitygroup as ext_sg
 from quantum.openstack.common.rpc import proxy
+from quantum.tests import base
 from quantum.tests.unit import test_extension_security_group as test_sg
 from quantum.tests.unit import test_iptables_firewall as test_fw
 
@@ -67,14 +69,14 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 rules = {
                     'security_group_rules': [rule1['security_group_rule'],
                                              rule2['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     security_groups=[sg1_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
@@ -82,7 +84,11 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': 'ingress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'ingress',
                              'protocol': 'tcp', 'ethertype': 'IPv4',
                              'port_range_max': 22,
                              'security_group_id': sg1_id,
@@ -92,10 +98,9 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                              'port_range_max': 23, 'security_group_id': sg1_id,
                              'port_range_min': 23,
                              'source_ip_prefix': fake_prefix},
-                            {'ethertype': 'IPv4', 'direction': 'egress'},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
 
     def test_security_group_rules_for_devices_ipv4_egress(self):
@@ -116,14 +121,14 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 rules = {
                     'security_group_rules': [rule1['security_group_rule'],
                                              rule2['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     security_groups=[sg1_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
@@ -131,7 +136,11 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': 'egress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress',
                              'protocol': 'tcp', 'ethertype': 'IPv4',
                              'port_range_max': 22,
                              'security_group_id': sg1_id,
@@ -142,8 +151,8 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                              'port_range_min': 23,
                              'dest_ip_prefix': fake_prefix},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
 
     def test_security_group_rules_for_devices_ipv4_source_group(self):
@@ -159,41 +168,48 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 rule1 = self._build_security_group_rule(
                     sg1_id,
                     'ingress', 'tcp', '24',
-                    '25', source_group_id=sg2['security_group']['id'])
+                    '25', remote_group_id=sg2['security_group']['id'])
                 rules = {
                     'security_group_rules': [rule1['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     security_groups=[sg1_id,
                                      sg2_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
 
                 res2 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     security_groups=[sg2_id])
-                ports_rest2 = self.deserialize('json', res2)
+                ports_rest2 = self.deserialize(self.fmt, res2)
                 port_id2 = ports_rest2['port']['id']
                 ctx = context.get_admin_context()
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': u'ingress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg2_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg2_id},
+                            {'direction': u'ingress',
                              'source_ip_prefix': u'10.0.0.3/32',
                              'protocol': u'tcp', 'ethertype': u'IPv4',
                              'port_range_max': 25, 'port_range_min': 24,
-                             'source_group_id': sg2_id,
+                             'remote_group_id': sg2_id,
                              'security_group_id': sg1_id},
-                            {'ethertype': 'IPv4', 'direction': 'egress'},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
                 self._delete('ports', port_id2)
 
@@ -219,15 +235,15 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 rules = {
                     'security_group_rules': [rule1['security_group_rule'],
                                              rule2['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     fixed_ips=[{'subnet_id': subnet_v6['subnet']['id']}],
                     security_groups=[sg1_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
@@ -235,7 +251,11 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': 'ingress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'ingress',
                              'protocol': 'tcp', 'ethertype': 'IPv6',
                              'port_range_max': 22,
                              'security_group_id': sg1_id,
@@ -245,10 +265,9 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                              'port_range_max': 23, 'security_group_id': sg1_id,
                              'port_range_min': 23,
                              'source_ip_prefix': fake_prefix},
-                            {'ethertype': 'IPv6', 'direction': 'egress'},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
 
     def test_security_group_rules_for_devices_ipv6_egress(self):
@@ -273,15 +292,15 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 rules = {
                     'security_group_rules': [rule1['security_group_rule'],
                                              rule2['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     fixed_ips=[{'subnet_id': subnet_v6['subnet']['id']}],
                     security_groups=[sg1_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
@@ -290,7 +309,11 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': 'egress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress',
                              'protocol': 'tcp', 'ethertype': 'IPv6',
                              'port_range_max': 22,
                              'security_group_id': sg1_id,
@@ -301,8 +324,8 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                              'port_range_min': 23,
                              'dest_ip_prefix': fake_prefix},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
 
     def test_security_group_rules_for_devices_ipv6_source_group(self):
@@ -322,73 +345,86 @@ class SGServerRpcCallBackMixinTestCase(test_sg.SecurityGroupDBTestCase):
                     'ingress', 'tcp', '24',
                     '25',
                     ethertype='IPv6',
-                    source_group_id=sg2['security_group']['id'])
+                    remote_group_id=sg2['security_group']['id'])
                 rules = {
                     'security_group_rules': [rule1['security_group_rule']]}
-                res = self._create_security_group_rule('json', rules)
-                self.deserialize('json', res)
-                self.assertEquals(res.status_int, 201)
+                res = self._create_security_group_rule(self.fmt, rules)
+                self.deserialize(self.fmt, res)
+                self.assertEqual(res.status_int, 201)
 
                 res1 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     fixed_ips=[{'subnet_id': subnet_v6['subnet']['id']}],
                     security_groups=[sg1_id,
                                      sg2_id])
-                ports_rest1 = self.deserialize('json', res1)
+                ports_rest1 = self.deserialize(self.fmt, res1)
                 port_id1 = ports_rest1['port']['id']
                 self.rpc.devices = {port_id1: ports_rest1['port']}
                 devices = [port_id1, 'no_exist_device']
 
                 res2 = self._create_port(
-                    'json', n['network']['id'],
+                    self.fmt, n['network']['id'],
                     fixed_ips=[{'subnet_id': subnet_v6['subnet']['id']}],
                     security_groups=[sg2_id])
-                ports_rest2 = self.deserialize('json', res2)
+                ports_rest2 = self.deserialize(self.fmt, res2)
                 port_id2 = ports_rest2['port']['id']
 
                 ctx = context.get_admin_context()
                 ports_rpc = self.rpc.security_group_rules_for_devices(
                     ctx, devices=devices)
                 port_rpc = ports_rpc[port_id1]
-                expected = [{'direction': 'ingress',
+                expected = [{'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg1_id},
+                            {'direction': 'egress', 'ethertype': 'IPv4',
+                             'security_group_id': sg2_id},
+                            {'direction': 'egress', 'ethertype': 'IPv6',
+                             'security_group_id': sg2_id},
+                            {'direction': 'ingress',
                              'source_ip_prefix': 'fe80::3/128',
                              'protocol': 'tcp', 'ethertype': 'IPv6',
                              'port_range_max': 25, 'port_range_min': 24,
-                             'source_group_id': sg2_id,
+                             'remote_group_id': sg2_id,
                              'security_group_id': sg1_id},
-                            {'ethertype': 'IPv6', 'direction': 'egress'},
                             ]
-                self.assertEquals(port_rpc['security_group_rules'],
-                                  expected)
+                self.assertEqual(port_rpc['security_group_rules'],
+                                 expected)
                 self._delete('ports', port_id1)
                 self._delete('ports', port_id2)
 
 
-class SGAgentRpcCallBackMixinTestCase(unittest.TestCase):
+class SGServerRpcCallBackMixinTestCaseXML(SGServerRpcCallBackMixinTestCase):
+    fmt = 'xml'
+
+
+class SGAgentRpcCallBackMixinTestCase(base.BaseTestCase):
     def setUp(self):
+        super(SGAgentRpcCallBackMixinTestCase, self).setUp()
         self.rpc = sg_rpc.SecurityGroupAgentRpcCallbackMixin()
-        self.rpc.agent = mock.Mock()
+        self.rpc.sg_agent = mock.Mock()
 
     def test_security_groups_rule_updated(self):
         self.rpc.security_groups_rule_updated(None,
                                               security_groups=['fake_sgid'])
-        self.rpc.agent.assert_has_calls(
+        self.rpc.sg_agent.assert_has_calls(
             [call.security_groups_rule_updated(['fake_sgid'])])
 
     def test_security_groups_member_updated(self):
         self.rpc.security_groups_member_updated(None,
                                                 security_groups=['fake_sgid'])
-        self.rpc.agent.assert_has_calls(
+        self.rpc.sg_agent.assert_has_calls(
             [call.security_groups_member_updated(['fake_sgid'])])
 
     def test_security_groups_provider_updated(self):
         self.rpc.security_groups_provider_updated(None)
-        self.rpc.agent.assert_has_calls(
+        self.rpc.sg_agent.assert_has_calls(
             [call.security_groups_provider_updated()])
 
 
-class SecurityGroupAgentRpcTestCase(unittest.TestCase):
+class SecurityGroupAgentRpcTestCase(base.BaseTestCase):
     def setUp(self):
+        super(SecurityGroupAgentRpcTestCase, self).setUp()
         self.agent = sg_rpc.SecurityGroupAgentRpcMixin()
         self.agent.context = None
         self.addCleanup(mock.patch.stopall)
@@ -406,7 +442,7 @@ class SecurityGroupAgentRpcTestCase(unittest.TestCase):
                             'security_group_source_groups': ['fake_sgid2'],
                             'security_group_rules': [{'security_group_id':
                                                       'fake_sgid1',
-                                                      'source_group_id':
+                                                      'remote_group_id':
                                                       'fake_sgid2'}]}
         fake_devices = {'fake_device': self.fake_device}
         self.firewall.ports = fake_devices
@@ -471,8 +507,9 @@ class FakeSGRpcApi(agent_rpc.PluginApi,
     pass
 
 
-class SecurityGroupServerRpcApiTestCase(unittest.TestCase):
+class SecurityGroupServerRpcApiTestCase(base.BaseTestCase):
     def setUp(self):
+        super(SecurityGroupServerRpcApiTestCase, self).setUp()
         self.rpc = FakeSGRpcApi('fake_topic')
         self.rpc.call = mock.Mock()
 
@@ -482,8 +519,8 @@ class SecurityGroupServerRpcApiTestCase(unittest.TestCase):
             [call(None,
              {'args':
                  {'devices': ['fake_device']},
-             'method':
-                 'security_group_rules_for_devices'},
+             'method': 'security_group_rules_for_devices',
+             'namespace': None},
              version=sg_rpc.SG_RPC_VERSION,
              topic='fake_topic')])
 
@@ -493,8 +530,9 @@ class FakeSGNotifierAPI(proxy.RpcProxy,
     pass
 
 
-class SecurityGroupAgentRpcApiTestCase(unittest.TestCase):
+class SecurityGroupAgentRpcApiTestCase(base.BaseTestCase):
     def setUp(self):
+        super(SecurityGroupAgentRpcApiTestCase, self).setUp()
         self.notifier = FakeSGNotifierAPI(topic='fake',
                                           default_version='1.0')
         self.notifier.fanout_cast = mock.Mock()
@@ -506,7 +544,8 @@ class SecurityGroupAgentRpcApiTestCase(unittest.TestCase):
             [call(None,
                   {'args':
                       {'security_groups': ['fake_sgid']},
-                      'method': 'security_groups_rule_updated'},
+                      'method': 'security_groups_rule_updated',
+                      'namespace': None},
                   version=sg_rpc.SG_RPC_VERSION,
                   topic='fake-security_group-update')])
 
@@ -517,19 +556,20 @@ class SecurityGroupAgentRpcApiTestCase(unittest.TestCase):
             [call(None,
                   {'args':
                       {'security_groups': ['fake_sgid']},
-                      'method': 'security_groups_member_updated'},
+                      'method': 'security_groups_member_updated',
+                      'namespace': None},
                   version=sg_rpc.SG_RPC_VERSION,
                   topic='fake-security_group-update')])
 
     def test_security_groups_rule_not_updated(self):
         self.notifier.security_groups_rule_updated(
             None, security_groups=[])
-        self.assertEquals(False, self.notifier.fanout_cast.called)
+        self.assertEqual(False, self.notifier.fanout_cast.called)
 
     def test_security_groups_member_not_updated(self):
         self.notifier.security_groups_member_updated(
             None, security_groups=[])
-        self.assertEquals(False, self.notifier.fanout_cast.called)
+        self.assertEqual(False, self.notifier.fanout_cast.called)
 
 #Note(nati) bn -> binary_name
 # id -> device_id
@@ -578,16 +618,16 @@ IPTABLES_FILTER_1 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port1 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port1 ! -s 10.0.0.3 -j DROP
@@ -615,17 +655,17 @@ IPTABLES_FILTER_1_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port1 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port1 -j RETURN -s 10.0.0.4
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port1 ! -s 10.0.0.3 -j DROP
@@ -657,17 +697,17 @@ IPTABLES_FILTER_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port1 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port1 -j RETURN -s 10.0.0.4
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port1 ! -s 10.0.0.3 -j DROP
@@ -676,17 +716,17 @@ IPTABLES_FILTER_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-o_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-o_port1 -j RETURN
 -A %(bn)s-o_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port2 -j %(bn)s-i_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-i_port2
 -A %(bn)s-i_port2 -m state --state INVALID -j DROP
 -A %(bn)s-i_port2 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port2 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port2 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port2 -j RETURN -s 10.0.0.3
 -A %(bn)s-i_port2 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
 -A %(bn)s-o_port2 -m mac ! --mac-source 12:34:56:78:9a:bd -j DROP
 -A %(bn)s-o_port2 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port2 ! -s 10.0.0.4 -j DROP
@@ -716,16 +756,16 @@ IPTABLES_FILTER_2_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port1 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port1 ! -s 10.0.0.3 -j DROP
@@ -734,17 +774,17 @@ IPTABLES_FILTER_2_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-o_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-o_port1 -j RETURN
 -A %(bn)s-o_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port2 -j %(bn)s-i_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-i_port2
 -A %(bn)s-i_port2 -m state --state INVALID -j DROP
 -A %(bn)s-i_port2 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port2 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
 -A %(bn)s-i_port2 -j RETURN -p tcp --dport 22
 -A %(bn)s-i_port2 -j RETURN -s 10.0.0.3
 -A %(bn)s-i_port2 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
 -A %(bn)s-o_port2 -m mac ! --mac-source 12:34:56:78:9a:bd -j DROP
 -A %(bn)s-o_port2 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port2 ! -s 10.0.0.4 -j DROP
@@ -774,8 +814,8 @@ IPTABLES_FILTER_2_3 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
@@ -783,9 +823,9 @@ IPTABLES_FILTER_2_3 = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-i_port1 -j RETURN -s 10.0.0.4
 -A %(bn)s-i_port1 -j RETURN -p icmp
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port1 ! -s 10.0.0.3 -j DROP
@@ -794,8 +834,8 @@ IPTABLES_FILTER_2_3 = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-o_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-o_port1 -j RETURN
 -A %(bn)s-o_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port2 -j %(bn)s-i_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-i_port2
 -A %(bn)s-i_port2 -m state --state INVALID -j DROP
 -A %(bn)s-i_port2 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port2 -j RETURN -p udp --dport 68 --sport 67 -s 10.0.0.2
@@ -803,9 +843,9 @@ IPTABLES_FILTER_2_3 = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-i_port2 -j RETURN -s 10.0.0.3
 -A %(bn)s-i_port2 -j RETURN -p icmp
 -A %(bn)s-i_port2 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
 -A %(bn)s-o_port2 -m mac ! --mac-source 12:34:56:78:9a:bd -j DROP
 -A %(bn)s-o_port2 -p udp --sport 68 --dport 67 -j RETURN
 -A %(bn)s-o_port2 ! -s 10.0.0.4 -j DROP
@@ -851,14 +891,14 @@ IPTABLES_FILTER_V6_1 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p icmpv6 -j RETURN
 -A %(bn)s-o_port1 -m state --state INVALID -j DROP
@@ -886,27 +926,27 @@ IPTABLES_FILTER_V6_2 = """:%(bn)s-(%(chains)s) - [0:0]
 -A OUTPUT -j %(bn)s-OUTPUT
 -A FORWARD -j %(bn)s-FORWARD
 -A %(bn)s-sg-fallback -j DROP
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port1 -j %(bn)s-i_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port1 -j %(bn)s-i_port1
 -A %(bn)s-i_port1 -m state --state INVALID -j DROP
 -A %(bn)s-i_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port1 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port1 -j %(bn)s-o_port1
 -A %(bn)s-o_port1 -m mac ! --mac-source 12:34:56:78:9a:bc -j DROP
 -A %(bn)s-o_port1 -p icmpv6 -j RETURN
 -A %(bn)s-o_port1 -m state --state INVALID -j DROP
 -A %(bn)s-o_port1 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-o_port1 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-out tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-out tap_port2 -j %(bn)s-i_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-INGRESS tap_port2 -j %(bn)s-i_port2
 -A %(bn)s-i_port2 -m state --state INVALID -j DROP
 -A %(bn)s-i_port2 -m state --state ESTABLISHED,RELATED -j RETURN
 -A %(bn)s-i_port2 -j %(bn)s-sg-fallback
--A %(bn)s-FORWARD %(physdev)s --physdev-in tap_port2 -j %(bn)s-sg-chain
--A %(bn)s-sg-chain %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
--A %(bn)s-INPUT %(physdev)s --physdev-in tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-FORWARD %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-sg-chain
+-A %(bn)s-sg-chain %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
+-A %(bn)s-INPUT %(physdev)s --physdev-EGRESS tap_port2 -j %(bn)s-o_port2
 -A %(bn)s-o_port2 -m mac ! --mac-source 12:34:56:78:9a:bd -j DROP
 -A %(bn)s-o_port2 -p icmpv6 -j RETURN
 -A %(bn)s-o_port2 -m state --state INVALID -j DROP
@@ -932,11 +972,35 @@ IPTABLES_FILTER_V6_EMPTY = """:%(bn)s-(%(chains)s) - [0:0]
 -A %(bn)s-sg-fallback -j DROP
 """ % IPTABLES_ARG
 
+FIREWALL_BASE_PACKAGE = 'quantum.agent.linux.iptables_firewall.'
+FIREWALL_IPTABLES_DRIVER = FIREWALL_BASE_PACKAGE + 'IptablesFirewallDriver'
+FIREWALL_HYBRID_DRIVER = (FIREWALL_BASE_PACKAGE +
+                          'OVSHybridIptablesFirewallDriver')
+FIREWALL_NOOP_DRIVER = 'quantum.agent.firewall.NoopFirewallDriver'
 
-class TestSecurityGroupAgentWithIptables(unittest.TestCase):
+
+def set_firewall_driver(firewall_driver):
+    cfg.CONF.set_override('firewall_driver', firewall_driver,
+                          group='SECURITYGROUP')
+
+
+class TestSecurityGroupAgentWithIptables(base.BaseTestCase):
+    FIREWALL_DRIVER = FIREWALL_IPTABLES_DRIVER
+    PHYSDEV_INGRESS = 'physdev-out'
+    PHYSDEV_EGRESS = 'physdev-in'
+
     def setUp(self):
+        super(TestSecurityGroupAgentWithIptables, self).setUp()
         self.mox = mox.Mox()
+        agent_opts = [
+            cfg.StrOpt('root_helper', default='sudo'),
+        ]
 
+        cfg.CONF.register_opts(agent_opts, "AGENT")
+        cfg.CONF.set_override(
+            'firewall_driver',
+            self.FIREWALL_DRIVER,
+            group='SECURITYGROUP')
         self.addCleanup(mock.patch.stopall)
         self.addCleanup(self.mox.UnsetStubs)
 
@@ -1014,6 +1078,8 @@ class TestSecurityGroupAgentWithIptables(unittest.TestCase):
                     'security_group1']}
 
     def _regex(self, value):
+        value = value.replace('physdev-INGRESS', self.PHYSDEV_INGRESS)
+        value = value.replace('physdev-EGRESS', self.PHYSDEV_EGRESS)
         value = value.replace('\n', '\\n')
         value = value.replace('[', '\[')
         value = value.replace(']', '\]')
@@ -1089,3 +1155,95 @@ class TestSecurityGroupAgentWithIptables(unittest.TestCase):
         self.agent.security_groups_rule_updated(['security_group1'])
 
         self.mox.VerifyAll()
+
+
+class SGNotificationTestMixin():
+    def test_security_group_rule_updated(self):
+        name = 'webservers'
+        description = 'my webservers'
+        with self.security_group(name, description) as sg:
+            with self.security_group(name, description) as sg2:
+                security_group_id = sg['security_group']['id']
+                direction = "ingress"
+                remote_group_id = sg2['security_group']['id']
+                protocol = 'tcp'
+                port_range_min = 88
+                port_range_max = 88
+                with self.security_group_rule(security_group_id, direction,
+                                              protocol, port_range_min,
+                                              port_range_max,
+                                              remote_group_id=remote_group_id
+                                              ):
+                    pass
+            self.notifier.assert_has_calls(
+                [call.security_groups_rule_updated(mock.ANY,
+                                                   [security_group_id]),
+                 call.security_groups_rule_updated(mock.ANY,
+                                                   [security_group_id])])
+
+    def test_security_group_member_updated(self):
+        with self.network() as n:
+            with self.subnet(n):
+                with self.security_group() as sg:
+                    security_group_id = sg['security_group']['id']
+                    res = self._create_port(self.fmt, n['network']['id'])
+                    port = self.deserialize(self.fmt, res)
+
+                    data = {'port': {'fixed_ips': port['port']['fixed_ips'],
+                                     'name': port['port']['name'],
+                                     ext_sg.SECURITYGROUPS:
+                                     [security_group_id]}}
+
+                    req = self.new_update_request('ports', data,
+                                                  port['port']['id'])
+                    res = self.deserialize(self.fmt,
+                                           req.get_response(self.api))
+                    self.assertEqual(res['port'][ext_sg.SECURITYGROUPS][0],
+                                     security_group_id)
+                    self._delete('ports', port['port']['id'])
+                    self.notifier.assert_has_calls(
+                        [call.security_groups_member_updated(
+                            mock.ANY, [mock.ANY]),
+                         call.security_groups_member_updated(
+                             mock.ANY, [security_group_id])])
+
+
+class TestSecurityGroupAgentWithOVSIptables(
+        TestSecurityGroupAgentWithIptables):
+
+    FIREWALL_DRIVER = FIREWALL_HYBRID_DRIVER
+
+    def _regex(self, value):
+        #Note(nati): tap is prefixed on the device
+        # in the OVSHybridIptablesFirewallDriver
+
+        value = value.replace('tap_port', 'taptap_port')
+        value = value.replace('o_port', 'otap_port')
+        value = value.replace('i_port', 'itap_port')
+        return super(
+            TestSecurityGroupAgentWithOVSIptables,
+            self)._regex(value)
+
+
+class TestSecurityGroupExtensionControl(base.BaseTestCase):
+    def test_firewall_enabled_noop_driver(self):
+        set_firewall_driver(FIREWALL_NOOP_DRIVER)
+        self.assertFalse(sg_rpc.is_firewall_enabled())
+
+    def test_firewall_enabled_iptables_driver(self):
+        set_firewall_driver(FIREWALL_IPTABLES_DRIVER)
+        self.assertTrue(sg_rpc.is_firewall_enabled())
+
+    def test_disable_security_group_extension_noop_driver(self):
+        set_firewall_driver(FIREWALL_NOOP_DRIVER)
+        exp_aliases = ['dummy1', 'dummy2']
+        ext_aliases = ['dummy1', 'security-group', 'dummy2']
+        sg_rpc.disable_security_group_extension_if_noop_driver(ext_aliases)
+        self.assertEqual(ext_aliases, exp_aliases)
+
+    def test_disable_security_group_extension_iptables_driver(self):
+        set_firewall_driver(FIREWALL_IPTABLES_DRIVER)
+        exp_aliases = ['dummy1', 'security-group', 'dummy2']
+        ext_aliases = ['dummy1', 'security-group', 'dummy2']
+        sg_rpc.disable_security_group_extension_if_noop_driver(ext_aliases)
+        self.assertEqual(ext_aliases, exp_aliases)

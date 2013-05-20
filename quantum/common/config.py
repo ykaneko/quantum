@@ -21,11 +21,11 @@ Routines for configuring Quantum
 
 import os
 
+from oslo.config import cfg
 from paste import deploy
 
 from quantum.api.v2 import attributes
 from quantum.common import utils
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
 from quantum.version import version_info as quantum_version
@@ -56,12 +56,25 @@ core_opts = [
                help=_("How many times Quantum will retry MAC generation")),
     cfg.BoolOpt('allow_bulk', default=True,
                 help=_("Allow the usage of the bulk API")),
+    cfg.BoolOpt('allow_pagination', default=False,
+                help=_("Allow the usage of the pagination")),
+    cfg.BoolOpt('allow_sorting', default=False,
+                help=_("Allow the usage of the sorting")),
+    cfg.StrOpt('pagination_max_limit', default="-1",
+               help=_("The maximum number of items returned in a single "
+                      "response, value was 'infinite' or negative integer "
+                      "means no limit")),
     cfg.IntOpt('max_dns_nameservers', default=5,
                help=_("Maximum number of DNS nameservers")),
     cfg.IntOpt('max_subnet_host_routes', default=20,
                help=_("Maximum number of host routes per subnet")),
+    cfg.IntOpt('max_fixed_ips_per_port', default=5,
+               help=_("Maximum number of fixed ips per port")),
     cfg.IntOpt('dhcp_lease_duration', default=120,
                help=_("DHCP lease duration")),
+    cfg.BoolOpt('dhcp_agent_notification', default=True,
+                help=_("Allow sending resource operation"
+                       " notification to DHCP agent")),
     cfg.BoolOpt('allow_overlapping_ips', default=False,
                 help=_("Allow overlapping IP support in Quantum")),
     cfg.StrOpt('host', default=utils.get_hostname(),
@@ -84,7 +97,7 @@ rpc.set_defaults(control_exchange='quantum')
 
 def parse(args):
     cfg.CONF(args=args, project='quantum',
-             version='%%prog %s' % quantum_version.version_string_with_vcs())
+             version='%%prog %s' % quantum_version.release_string())
 
     # Validate that the base_mac is of the correct format
     msg = attributes._validate_regex(cfg.CONF.base_mac,
@@ -95,21 +108,17 @@ def parse(args):
 
 
 def setup_logging(conf):
-    """
-    Sets up the logging options for a log with supplied name
+    """Sets up the logging options for a log with supplied name.
 
     :param conf: a cfg.ConfOpts object
     """
     product_name = "quantum"
     logging.setup(product_name)
-    log_root = logging.getLogger(product_name).logger
-    log_root.propagate = 0
     LOG.info(_("Logging enabled!"))
 
 
 def load_paste_app(app_name):
-    """
-    Builds and returns a WSGI app from a paste config file.
+    """Builds and returns a WSGI app from a paste config file.
 
     :param app_name: Name of the application to load
     :raises RuntimeError when config file cannot be located or application
@@ -123,8 +132,10 @@ def load_paste_app(app_name):
     try:
         app = deploy.loadapp("config:%s" % config_path, name=app_name)
     except (LookupError, ImportError):
-        msg = _("Unable to load %(app_name)s from "
-                "configuration file %(config_path)s.") % locals()
+        msg = (_("Unable to load %(app_name)s from "
+                 "configuration file %(config_path)s.") %
+               {'app_name': app_name,
+                'config_path': config_path})
         LOG.exception(msg)
         raise RuntimeError(msg)
     return app

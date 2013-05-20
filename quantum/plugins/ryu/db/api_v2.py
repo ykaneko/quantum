@@ -21,6 +21,9 @@ from sqlalchemy.orm import exc as orm_exc
 from quantum.common import exceptions as q_exc
 import quantum.db.api as db
 from quantum.db import models_v2
+from quantum.db import securitygroups_db as sg_db
+from quantum.extensions import securitygroup as ext_sg
+from quantum import manager
 from quantum.openstack.common import log as logging
 from quantum.plugins.ryu.db import models_v2 as ryu_models_v2
 
@@ -28,19 +31,33 @@ from quantum.plugins.ryu.db import models_v2 as ryu_models_v2
 LOG = logging.getLogger(__name__)
 
 
-def set_ofp_servers(hosts):
-    session = db.get_session()
-    session.query(ryu_models_v2.OFPServer).delete()
-    for (host_address, host_type) in hosts:
-        host = ryu_models_v2.OFPServer(address=host_address,
-                                       host_type=host_type)
-        session.add(host)
-    session.flush()
-
-
 def network_all_tenant_list():
     session = db.get_session()
     return session.query(models_v2.Network).all()
+
+
+def get_port_from_device(port_id):
+    LOG.debug(_("get_port_from_device() called:port_id=%s"), port_id)
+    session = db.get_session()
+    sg_binding_port = sg_db.SecurityGroupPortBinding.port_id
+
+    query = session.query(models_v2.Port,
+                          sg_db.SecurityGroupPortBinding.security_group_id)
+    query = query.outerjoin(sg_db.SecurityGroupPortBinding,
+                            models_v2.Port.id == sg_binding_port)
+    query = query.filter(models_v2.Port.id == port_id)
+    port_and_sgs = query.all()
+    if not port_and_sgs:
+        return None
+    port = port_and_sgs[0][0]
+    plugin = manager.QuantumManager.get_plugin()
+    port_dict = plugin._make_port_dict(port)
+    port_dict[ext_sg.SECURITYGROUPS] = [
+        sg_id for port_, sg_id in port_and_sgs if sg_id]
+    port_dict['security_group_rules'] = []
+    port_dict['security_group_source_groups'] = []
+    port_dict['fixed_ips'] = [ip['ip_address'] for ip in port['fixed_ips']]
+    return port_dict
 
 
 class TunnelKey(object):
@@ -81,8 +98,9 @@ class TunnelKey(object):
         return session.query(ryu_models_v2.TunnelKeyLast).one()
 
     def _find_key(self, session, last_key):
-        """
-        Try to find unused tunnel key in TunnelKey table starting
+        """Try to find unused tunnel key.
+
+        Trying to find unused tunnel key in TunnelKey table starting
         from last_key + 1.
         When all keys are used, raise sqlalchemy.orm.exc.NoResultFound
         """
@@ -136,7 +154,7 @@ class TunnelKey(object):
 
         new_key = new_key[0]  # the result is tuple.
         LOG.debug(_("last_key %(last_key)s new_key %(new_key)s"),
-                  locals())
+                  {'last_key': last_key, 'new_key': new_key})
         if new_key > self.key_max:
             LOG.debug(_("No key found"))
             raise orm_exc.NoResultFound()

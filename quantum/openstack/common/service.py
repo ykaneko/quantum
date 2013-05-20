@@ -28,8 +28,8 @@ import time
 
 import eventlet
 import logging as std_logging
+from oslo.config import cfg
 
-from quantum.openstack.common import cfg
 from quantum.openstack.common import eventlet_backdoor
 from quantum.openstack.common.gettextutils import _
 from quantum.openstack.common import importutils
@@ -51,7 +51,7 @@ class Launcher(object):
         :returns: None
 
         """
-        self._services = threadgroup.ThreadGroup('launcher')
+        self._services = threadgroup.ThreadGroup()
         eventlet_backdoor.initialize_if_enabled()
 
     @staticmethod
@@ -310,7 +310,7 @@ class Service(object):
     """Service object for binaries running on hosts."""
 
     def __init__(self, threads=1000):
-        self.tg = threadgroup.ThreadGroup('service', threads)
+        self.tg = threadgroup.ThreadGroup(threads)
 
     def start(self):
         pass

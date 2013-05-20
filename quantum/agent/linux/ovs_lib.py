@@ -54,14 +54,17 @@ class OVSBridge:
         name = 'name\s*:\s"(?P<port_name>[^"]*)"'
         port = 'ofport\s*:\s(?P<ofport>-?\d+)'
         _re = ('%(external)s:\s{ ( %(mac)s,? | %(iface)s,? | . )* }'
-               ' \s+ %(name)s \s+ %(port)s' % locals())
+               ' \s+ %(name)s \s+ %(port)s' % {'external': external,
+                                               'mac': mac,
+                                               'iface': iface, 'name': name,
+                                               'port': port})
         return re.compile(_re, re.M | re.X)
 
     def run_vsctl(self, args):
         full_args = ["ovs-vsctl", "--timeout=2"] + args
         try:
             return utils.execute(full_args, root_helper=self.root_helper)
-        except Exception, e:
+        except Exception as e:
             LOG.error(_("Unable to execute %(cmd)s. Exception: %(exception)s"),
                       {'cmd': full_args, 'exception': e})
 
@@ -90,7 +93,7 @@ class OVSBridge:
         full_args = ["ovs-ofctl", cmd, self.br_name] + args
         try:
             return utils.execute(full_args, root_helper=self.root_helper)
-        except Exception, e:
+        except Exception as e:
             LOG.error(_("Unable to execute %(cmd)s. Exception: %(exception)s"),
                       {'cmd': full_args, 'exception': e})
 
@@ -212,7 +215,7 @@ class OVSBridge:
                 "param-key=nicira-iface-id", "uuid=%s" % xs_vif_uuid]
         try:
             return utils.execute(args, root_helper=self.root_helper).strip()
-        except Exception, e:
+        except Exception as e:
             LOG.error(_("Unable to execute %(cmd)s. Exception: %(exception)s"),
                       {'cmd': args, 'exception': e})
 
@@ -267,7 +270,7 @@ class OVSBridge:
             port_name = match.group('port_name')
             ofport = int(match.group('ofport'))
             return VifPort(port_name, ofport, vif_id, vif_mac, self)
-        except Exception, e:
+        except Exception as e:
             LOG.info(_("Unable to parse regex results. Exception: %s"), e)
             return
 
@@ -285,9 +288,8 @@ def get_bridge_for_iface(root_helper, iface):
     args = ["ovs-vsctl", "--timeout=2", "iface-to-br", iface]
     try:
         return utils.execute(args, root_helper=root_helper).strip()
-    except Exception, e:
-        LOG.exception(_("Interface %(iface)s not found. Exception: %(e)s"),
-                      locals())
+    except Exception:
+        LOG.exception(_("Interface %s not found."), iface)
         return None
 
 
@@ -295,6 +297,6 @@ def get_bridges(root_helper):
     args = ["ovs-vsctl", "--timeout=2", "list-br"]
     try:
         return utils.execute(args, root_helper=root_helper).strip().split("\n")
-    except Exception, e:
+    except Exception as e:
         LOG.exception(_("Unable to retrieve bridges. Exception: %s"), e)
         return []

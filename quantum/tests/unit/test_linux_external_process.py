@@ -17,20 +17,19 @@
 # @author: Mark McClain, DreamHost
 
 import mock
-import unittest2 as unittest
 
 from quantum.agent.linux import external_process as ep
+from quantum.tests import base
 
 
-class TestProcessManager(unittest.TestCase):
+class TestProcessManager(base.BaseTestCase):
     def setUp(self):
+        super(TestProcessManager, self).setUp()
         self.execute_p = mock.patch('quantum.agent.linux.utils.execute')
         self.execute = self.execute_p.start()
+        self.addCleanup(self.execute_p.stop)
         self.conf = mock.Mock()
         self.conf.external_pids = '/var/path'
-
-    def tearDown(self):
-        self.execute_p.stop()
 
     def test_enable_no_namespace(self):
         callback = mock.Mock()
@@ -74,7 +73,7 @@ class TestProcessManager(unittest.TestCase):
             active.__get__ = mock.Mock(return_value=True)
 
             manager = ep.ProcessManager(self.conf, 'uuid', namespace='ns')
-            with mock.patch.object(ep, 'ip_lib') as ip_lib:
+            with mock.patch.object(ep, 'ip_lib'):
                 manager.enable(callback)
                 self.assertFalse(callback.called)
 
@@ -96,12 +95,10 @@ class TestProcessManager(unittest.TestCase):
 
                 manager = ep.ProcessManager(self.conf, 'uuid', namespace='ns')
 
-                with mock.patch.object(ep, 'ip_lib') as ip_lib:
+                with mock.patch.object(ep, 'utils') as utils:
                     manager.disable()
-                    ip_lib.assert_has_calls([
-                        mock.call.IPWrapper('sudo', 'ns'),
-                        mock.call.IPWrapper().netns.execute(['kill', '-9', 4])]
-                    )
+                    utils.assert_has_calls(
+                        mock.call.execute(['kill', '-9', 4], 'sudo'))
 
     def test_disable_not_active(self):
         with mock.patch.object(ep.ProcessManager, 'pid') as pid:

@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,12 +18,11 @@ from sqlalchemy.orm import exc
 
 from quantum.common import exceptions as q_exc
 import quantum.db.api as db
-from quantum import manager
 from quantum.db import models_v2
 from quantum.db import securitygroups_db as sg_db
+from quantum import manager
 from quantum.openstack.common import log as logging
-# NOTE (e0ne): this import is needed for config init
-from quantum.plugins.linuxbridge.common import config
+from quantum.plugins.linuxbridge.common import config  # noqa
 from quantum.plugins.linuxbridge.common import constants
 from quantum.plugins.linuxbridge.db import l2network_models_v2
 
@@ -94,7 +93,7 @@ def sync_network_states(network_vlan_ranges):
 
 
 def get_network_state(physical_network, vlan_id):
-    """Get state of specified network"""
+    """Get state of specified network."""
 
     session = db.get_session()
     try:
@@ -111,6 +110,7 @@ def reserve_network(session):
     with session.begin(subtransactions=True):
         state = (session.query(l2network_models_v2.NetworkState).
                  filter_by(allocated=False).
+                 with_lockmode('update').
                  first())
         if not state:
             raise q_exc.NoNetworkAvailable()
@@ -128,6 +128,7 @@ def reserve_specific_network(session, physical_network, vlan_id):
             state = (session.query(l2network_models_v2.NetworkState).
                      filter_by(physical_network=physical_network,
                                vlan_id=vlan_id).
+                     with_lockmode('update').
                      one())
             if state.allocated:
                 if vlan_id == constants.FLAT_VLAN_ID:
@@ -137,11 +138,15 @@ def reserve_specific_network(session, physical_network, vlan_id):
                     raise q_exc.VlanIdInUse(vlan_id=vlan_id,
                                             physical_network=physical_network)
             LOG.debug(_("Reserving specific vlan %(vlan_id)s on physical "
-                        "network %(physical_network)s from pool"), locals())
+                        "network %(physical_network)s from pool"),
+                      {'vlan_id': vlan_id,
+                       'physical_network': physical_network})
             state.allocated = True
         except exc.NoResultFound:
             LOG.debug(_("Reserving specific vlan %(vlan_id)s on physical "
-                        "network %(physical_network)s outside pool"), locals())
+                        "network %(physical_network)s outside pool"),
+                      {'vlan_id': vlan_id,
+                       'physical_network': physical_network})
             state = l2network_models_v2.NetworkState(physical_network, vlan_id)
             state.allocated = True
             session.add(state)
@@ -153,6 +158,7 @@ def release_network(session, physical_network, vlan_id, network_vlan_ranges):
             state = (session.query(l2network_models_v2.NetworkState).
                      filter_by(physical_network=physical_network,
                                vlan_id=vlan_id).
+                     with_lockmode('update').
                      one())
             state.allocated = False
             inside = False
@@ -163,14 +169,19 @@ def release_network(session, physical_network, vlan_id, network_vlan_ranges):
             if inside:
                 LOG.debug(_("Releasing vlan %(vlan_id)s on physical network "
                             "%(physical_network)s to pool"),
-                          locals())
+                          {'vlan_id': vlan_id,
+                           'physical_network': physical_network})
             else:
                 LOG.debug(_("Releasing vlan %(vlan_id)s on physical network "
-                          "%(physical_network)s outside pool"), locals())
+                          "%(physical_network)s outside pool"),
+                          {'vlan_id': vlan_id,
+                           'physical_network': physical_network})
                 session.delete(state)
         except exc.NoResultFound:
             LOG.warning(_("vlan_id %(vlan_id)s on physical network "
-                          "%(physical_network)s not found"), locals())
+                          "%(physical_network)s not found"),
+                        {'vlan_id': vlan_id,
+                         'physical_network': physical_network})
 
 
 def add_network_binding(session, network_id, physical_network, vlan_id):
@@ -191,7 +202,7 @@ def get_network_binding(session, network_id):
 
 
 def get_port_from_device(device):
-    """Get port from database"""
+    """Get port from database."""
     LOG.debug(_("get_port_from_device() called"))
     session = db.get_session()
     sg_binding_port = sg_db.SecurityGroupPortBinding.port_id
@@ -219,7 +230,7 @@ def get_port_from_device(device):
 
 
 def set_port_status(port_id, status):
-    """Set the port status"""
+    """Set the port status."""
     LOG.debug(_("set_port_status as %s called"), status)
     session = db.get_session()
     try:

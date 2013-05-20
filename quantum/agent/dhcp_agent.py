@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -21,77 +21,117 @@ import uuid
 
 import eventlet
 import netaddr
+from oslo.config import cfg
 
 from quantum.agent.common import config
 from quantum.agent.linux import dhcp
+from quantum.agent.linux import external_process
 from quantum.agent.linux import interface
 from quantum.agent.linux import ip_lib
 from quantum.agent import rpc as agent_rpc
+from quantum.common import constants
 from quantum.common import exceptions
 from quantum.common import topics
 from quantum import context
-from quantum.openstack.common import cfg
+from quantum import manager
 from quantum.openstack.common import importutils
 from quantum.openstack.common import jsonutils
+from quantum.openstack.common import lockutils
 from quantum.openstack.common import log as logging
+from quantum.openstack.common import loopingcall
 from quantum.openstack.common.rpc import proxy
+from quantum.openstack.common import service
 from quantum.openstack.common import uuidutils
+from quantum import service as quantum_service
 
 LOG = logging.getLogger(__name__)
 NS_PREFIX = 'qdhcp-'
+METADATA_DEFAULT_PREFIX = 16
+METADATA_DEFAULT_IP = '169.254.169.254/%d' % METADATA_DEFAULT_PREFIX
+METADATA_PORT = 80
 
 
-class DhcpAgent(object):
+class DhcpAgent(manager.Manager):
     OPTS = [
-        cfg.StrOpt('root_helper', default='sudo',
-                   help=_("Root helper application.")),
-        cfg.IntOpt('resync_interval', default=30,
+        cfg.IntOpt('resync_interval', default=5,
                    help=_("Interval to resync.")),
         cfg.StrOpt('dhcp_driver',
                    default='quantum.agent.linux.dhcp.Dnsmasq',
                    help=_("The driver used to manage the DHCP server.")),
         cfg.BoolOpt('use_namespaces', default=True,
-                    help=_("Allow overlapping IP."))
+                    help=_("Allow overlapping IP.")),
+        cfg.BoolOpt('enable_isolated_metadata', default=False,
+                    help=_("Support Metadata requests on isolated networks.")),
+        cfg.BoolOpt('enable_metadata_network', default=False,
+                    help=_("Allows for serving metadata requests from a "
+                           "dedicated network. Requires "
+                           "enable_isolated_metadata = True")),
     ]
 
-    def __init__(self, conf):
+    def __init__(self, host=None):
+        super(DhcpAgent, self).__init__(host=host)
         self.needs_resync = False
-        self.conf = conf
+        self.conf = cfg.CONF
         self.cache = NetworkCache()
-
-        self.dhcp_driver_cls = importutils.import_class(conf.dhcp_driver)
+        self.root_helper = config.get_root_helper(self.conf)
+        self.dhcp_driver_cls = importutils.import_class(self.conf.dhcp_driver)
         ctx = context.get_admin_context_without_session()
         self.plugin_rpc = DhcpPluginApi(topics.PLUGIN, ctx)
-
         self.device_manager = DeviceManager(self.conf, self.plugin_rpc)
-        self.notifications = agent_rpc.NotificationDispatcher()
         self.lease_relay = DhcpLeaseRelay(self.update_lease)
+
+        self.dhcp_version = self.dhcp_driver_cls.check_version()
+        self._populate_networks_cache()
+
+    def _populate_networks_cache(self):
+        """Populate the networks cache when the DHCP-agent starts."""
+
+        try:
+            existing_networks = self.dhcp_driver_cls.existing_dhcp_networks(
+                self.conf,
+                self.root_helper
+            )
+
+            for net_id in existing_networks:
+                net = DictModel({"id": net_id, "subnets": [], "ports": []})
+                self.cache.put(net)
+        except NotImplementedError:
+            # just go ahead with an empty networks cache
+            LOG.debug(
+                _("The '%s' DHCP-driver does not support retrieving of a "
+                  "list of existing networks"),
+                self.conf.dhcp_driver
+            )
+
+    def after_start(self):
+        self.run()
+        LOG.info(_("DHCP agent started"))
 
     def run(self):
         """Activate the DHCP agent."""
         self.sync_state()
         self.periodic_resync()
         self.lease_relay.start()
-        self.notifications.run_dispatch(self)
+
+    def _ns_name(self, network):
+        if self.conf.use_namespaces:
+            return NS_PREFIX + network.id
 
     def call_driver(self, action, network):
         """Invoke an action on a DHCP driver instance."""
-        if self.conf.use_namespaces:
-            namespace = NS_PREFIX + network.id
-        else:
-            namespace = None
         try:
             # the Driver expects something that is duck typed similar to
             # the base models.
             driver = self.dhcp_driver_cls(self.conf,
                                           network,
-                                          self.conf.root_helper,
+                                          self.root_helper,
                                           self.device_manager,
-                                          namespace)
+                                          self._ns_name(network),
+                                          self.dhcp_version)
             getattr(driver, action)()
             return True
 
-        except Exception, e:
+        except Exception:
             self.needs_resync = True
             LOG.exception(_('Unable to %s dhcp.'), action)
 
@@ -99,7 +139,7 @@ class DhcpAgent(object):
         try:
             self.plugin_rpc.update_lease_expiration(network_id, ip_address,
                                                     time_remaining)
-        except:
+        except Exception:
             self.needs_resync = True
             LOG.exception(_('Unable to update lease'))
 
@@ -115,7 +155,7 @@ class DhcpAgent(object):
 
             for network_id in active_networks:
                 self.refresh_dhcp_helper(network_id)
-        except:
+        except Exception:
             self.needs_resync = True
             LOG.exception(_('Unable to sync network state.'))
 
@@ -135,7 +175,7 @@ class DhcpAgent(object):
         """Enable DHCP for a network that meets enabling criteria."""
         try:
             network = self.plugin_rpc.get_network_info(network_id)
-        except:
+        except Exception:
             self.needs_resync = True
             LOG.exception(_('Network %s RPC info call failed.'), network_id)
             return
@@ -146,6 +186,9 @@ class DhcpAgent(object):
         for subnet in network.subnets:
             if subnet.enable_dhcp:
                 if self.call_driver('enable', network):
+                    if (self.conf.use_namespaces and
+                        self.conf.enable_isolated_metadata):
+                        self.enable_isolated_metadata_proxy(network)
                     self.cache.put(network)
                 break
 
@@ -153,13 +196,15 @@ class DhcpAgent(object):
         """Disable DHCP for a network known to the agent."""
         network = self.cache.get_network_by_id(network_id)
         if network:
+            if (self.conf.use_namespaces and
+                self.conf.enable_isolated_metadata):
+                self.disable_isolated_metadata_proxy(network)
             if self.call_driver('disable', network):
                 self.cache.remove(network)
 
     def refresh_dhcp_helper(self, network_id):
         """Refresh or disable DHCP for a network depending on the current state
         of the network.
-
         """
         old_network = self.cache.get_network_by_id(network_id)
         if not old_network:
@@ -168,7 +213,7 @@ class DhcpAgent(object):
 
         try:
             network = self.plugin_rpc.get_network_info(network_id)
-        except:
+        except Exception:
             self.needs_resync = True
             LOG.exception(_('Network %s RPC info call failed.'), network_id)
             return
@@ -185,12 +230,14 @@ class DhcpAgent(object):
         else:
             self.disable_dhcp_helper(network.id)
 
-    def network_create_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def network_create_end(self, context, payload):
         """Handle the network.create.end notification event."""
         network_id = payload['network']['id']
         self.enable_dhcp_helper(network_id)
 
-    def network_update_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def network_update_end(self, context, payload):
         """Handle the network.update.end notification event."""
         network_id = payload['network']['id']
         if payload['network']['admin_state_up']:
@@ -198,11 +245,13 @@ class DhcpAgent(object):
         else:
             self.disable_dhcp_helper(network_id)
 
-    def network_delete_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def network_delete_end(self, context, payload):
         """Handle the network.delete.end notification event."""
         self.disable_dhcp_helper(payload['network_id'])
 
-    def subnet_update_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def subnet_update_end(self, context, payload):
         """Handle the subnet.update.end notification event."""
         network_id = payload['subnet']['network_id']
         self.refresh_dhcp_helper(network_id)
@@ -210,14 +259,16 @@ class DhcpAgent(object):
     # Use the update handler for the subnet create event.
     subnet_create_end = subnet_update_end
 
-    def subnet_delete_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def subnet_delete_end(self, context, payload):
         """Handle the subnet.delete.end notification event."""
         subnet_id = payload['subnet_id']
         network = self.cache.get_network_by_subnet_id(subnet_id)
         if network:
             self.refresh_dhcp_helper(network.id)
 
-    def port_update_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def port_update_end(self, context, payload):
         """Handle the port.update.end notification event."""
         port = DictModel(payload['port'])
         network = self.cache.get_network_by_id(port.network_id)
@@ -228,13 +279,65 @@ class DhcpAgent(object):
     # Use the update handler for the port create event.
     port_create_end = port_update_end
 
-    def port_delete_end(self, payload):
+    @lockutils.synchronized('agent', 'dhcp-')
+    def port_delete_end(self, context, payload):
         """Handle the port.delete.end notification event."""
         port = self.cache.get_port_by_id(payload['port_id'])
         if port:
             network = self.cache.get_network_by_id(port.network_id)
             self.cache.remove_port(port)
             self.call_driver('reload_allocations', network)
+
+    def enable_isolated_metadata_proxy(self, network):
+
+        # The proxy might work for either a single network
+        # or all the networks connected via a router
+        # to the one passed as a parameter
+        quantum_lookup_param = '--network_id=%s' % network.id
+        meta_cidr = netaddr.IPNetwork(METADATA_DEFAULT_IP)
+        has_metadata_subnet = any(netaddr.IPNetwork(s.cidr) in meta_cidr
+                                  for s in network.subnets)
+        if (self.conf.enable_metadata_network and has_metadata_subnet):
+            router_ports = [port for port in network.ports
+                            if (port.device_owner ==
+                                constants.DEVICE_OWNER_ROUTER_INTF)]
+            if router_ports:
+                # Multiple router ports should not be allowed
+                if len(router_ports) > 1:
+                    LOG.warning(_("%(port_num)d router ports found on the "
+                                  "metadata access network. Only the port "
+                                  "%(port_id)s, for router %(router_id)s "
+                                  "will be considered"),
+                                {'port_num': len(router_ports),
+                                 'port_id': router_ports[0].id,
+                                 'router_id': router_ports[0].device_id})
+                quantum_lookup_param = ('--router_id=%s' %
+                                        router_ports[0].device_id)
+
+        def callback(pid_file):
+            proxy_cmd = ['quantum-ns-metadata-proxy',
+                         '--pid_file=%s' % pid_file,
+                         quantum_lookup_param,
+                         '--state_path=%s' % self.conf.state_path,
+                         '--metadata_port=%d' % METADATA_PORT]
+            proxy_cmd.extend(config.get_log_args(
+                cfg.CONF, 'quantum-ns-metadata-proxy-%s.log' % network.id))
+            return proxy_cmd
+
+        pm = external_process.ProcessManager(
+            self.conf,
+            network.id,
+            self.root_helper,
+            self._ns_name(network))
+        pm.enable(callback)
+
+    def disable_isolated_metadata_proxy(self, network):
+        pm = external_process.ProcessManager(
+            self.conf,
+            network.id,
+            self.root_helper,
+            self._ns_name(network))
+        pm.disable()
 
 
 class DhcpPluginApi(proxy.RpcProxy):
@@ -251,7 +354,7 @@ class DhcpPluginApi(proxy.RpcProxy):
         super(DhcpPluginApi, self).__init__(
             topic=topic, default_version=self.BASE_RPC_API_VERSION)
         self.context = context
-        self.host = socket.gethostname()
+        self.host = cfg.CONF.host
 
     def get_active_networks(self):
         """Make a remote process call to retrieve the active networks."""
@@ -373,31 +476,39 @@ class NetworkCache(object):
                 if port.id == port_id:
                     return port
 
+    def get_state(self):
+        net_ids = self.get_network_ids()
+        num_nets = len(net_ids)
+        num_subnets = 0
+        num_ports = 0
+        for net_id in net_ids:
+            network = self.get_network_by_id(net_id)
+            num_subnets += len(network.subnets)
+            num_ports += len(network.ports)
+        return {'networks': num_nets,
+                'subnets': num_subnets,
+                'ports': num_ports}
+
 
 class DeviceManager(object):
     OPTS = [
-        cfg.StrOpt('admin_user',
-                   help=_("Admin username")),
-        cfg.StrOpt('admin_password',
-                   help=_("Admin password")),
-        cfg.StrOpt('admin_tenant_name',
-                   help=_("Admin tenant name")),
-        cfg.StrOpt('auth_url',
-                   help=_("Authentication URL")),
-        cfg.StrOpt('auth_strategy', default='keystone',
-                   help=_("The type of authentication to use")),
-        cfg.StrOpt('auth_region',
-                   help=_("Authentication region")),
         cfg.StrOpt('interface_driver',
                    help=_("The driver used to manage the virtual interface."))
     ]
 
     def __init__(self, conf, plugin):
         self.conf = conf
+        self.root_helper = config.get_root_helper(conf)
         self.plugin = plugin
         if not conf.interface_driver:
-            LOG.error(_('You must specify an interface driver'))
-        self.driver = importutils.import_object(conf.interface_driver, conf)
+            raise SystemExit(_('You must specify an interface driver'))
+        try:
+            self.driver = importutils.import_object(conf.interface_driver,
+                                                    conf)
+        except Exception:
+            msg = _("Error importing interface driver "
+                    "'%s'") % conf.interface_driver
+            raise SystemExit(msg)
 
     def get_interface_name(self, network, port=None):
         """Return interface(device) name for use by the DHCP process."""
@@ -427,7 +538,7 @@ class DeviceManager(object):
             namespace = None
 
         if ip_lib.device_exists(interface_name,
-                                self.conf.root_helper,
+                                self.root_helper,
                                 namespace):
             if not reuse_existing:
                 raise exceptions.PreexistingDeviceFailure(
@@ -447,13 +558,31 @@ class DeviceManager(object):
             ip_cidr = '%s/%s' % (fixed_ip.ip_address, net.prefixlen)
             ip_cidrs.append(ip_cidr)
 
+        if (self.conf.enable_isolated_metadata and
+            self.conf.use_namespaces):
+            ip_cidrs.append(METADATA_DEFAULT_IP)
+
         self.driver.init_l3(interface_name, ip_cidrs,
                             namespace=namespace)
 
         # ensure that the dhcp interface is first in the list
         if namespace is None:
-            device = ip_lib.IPDevice(interface_name, self.conf.root_helper)
+            device = ip_lib.IPDevice(interface_name,
+                                     self.root_helper)
             device.route.pullup_route(interface_name)
+
+        if self.conf.enable_metadata_network:
+            meta_cidr = netaddr.IPNetwork(METADATA_DEFAULT_IP)
+            metadata_subnets = [s for s in network.subnets if
+                                netaddr.IPNetwork(s.cidr) in meta_cidr]
+            if metadata_subnets:
+                # Add a gateway so that packets can be routed back to VMs
+                device = ip_lib.IPDevice(interface_name,
+                                         self.root_helper,
+                                         namespace)
+                # Only 1 subnet on metadata access network
+                gateway_ip = metadata_subnets[0].gateway_ip
+                device.route.add_gateway(gateway_ip)
 
         return interface_name
 
@@ -530,11 +659,11 @@ class DhcpLeaseRelay(object):
             ip_address = str(netaddr.IPAddress(data['ip_address']))
             lease_remaining = int(data['lease_remaining'])
             self.callback(network_id, ip_address, lease_remaining)
-        except ValueError, e:
+        except ValueError as e:
             LOG.warn(_('Unable to parse lease relay msg to dict.'))
             LOG.warn(_('Exception value: %s'), e)
             LOG.warn(_('Message representation: %s'), repr(msg))
-        except Exception, e:
+        except Exception as e:
             LOG.exception(_('Unable update lease. Exception'))
 
     def start(self):
@@ -544,15 +673,73 @@ class DhcpLeaseRelay(object):
         eventlet.spawn(eventlet.serve, listener, self._handler)
 
 
-def main():
-    eventlet.monkey_patch()
+class DhcpAgentWithStateReport(DhcpAgent):
+    def __init__(self, host=None):
+        super(DhcpAgentWithStateReport, self).__init__(host=host)
+        self.state_rpc = agent_rpc.PluginReportStateAPI(topics.PLUGIN)
+        self.agent_state = {
+            'binary': 'quantum-dhcp-agent',
+            'host': host,
+            'topic': topics.DHCP_AGENT,
+            'configurations': {
+                'dhcp_driver': cfg.CONF.dhcp_driver,
+                'use_namespaces': cfg.CONF.use_namespaces,
+                'dhcp_lease_time': cfg.CONF.dhcp_lease_time},
+            'start_flag': True,
+            'agent_type': constants.AGENT_TYPE_DHCP}
+        report_interval = cfg.CONF.AGENT.report_interval
+        if report_interval:
+            self.heartbeat = loopingcall.FixedIntervalLoopingCall(
+                self._report_state)
+            self.heartbeat.start(interval=report_interval)
+
+    def _report_state(self):
+        try:
+            self.agent_state.get('configurations').update(
+                self.cache.get_state())
+            ctx = context.get_admin_context_without_session()
+            self.state_rpc.report_state(ctx,
+                                        self.agent_state)
+        except AttributeError:
+            # This means the server does not support report_state
+            LOG.warn(_("Quantum server does not support state report."
+                       " State report for this agent will be disabled."))
+            self.heartbeat.stop()
+            self.run()
+            return
+        except Exception:
+            LOG.exception(_("Failed reporting state!"))
+            return
+        if self.agent_state.pop('start_flag', None):
+            self.run()
+
+    def agent_updated(self, context, payload):
+        """Handle the agent_updated notification event."""
+        self.needs_resync = True
+        LOG.info(_("agent_updated by server side %s!"), payload)
+
+    def after_start(self):
+        LOG.info(_("DHCP agent started"))
+
+
+def register_options():
     cfg.CONF.register_opts(DhcpAgent.OPTS)
+    config.register_agent_state_opts_helper(cfg.CONF)
+    config.register_root_helper(cfg.CONF)
     cfg.CONF.register_opts(DeviceManager.OPTS)
     cfg.CONF.register_opts(DhcpLeaseRelay.OPTS)
     cfg.CONF.register_opts(dhcp.OPTS)
     cfg.CONF.register_opts(interface.OPTS)
+
+
+def main():
+    eventlet.monkey_patch()
+    register_options()
     cfg.CONF(project='quantum')
     config.setup_logging(cfg.CONF)
-
-    mgr = DhcpAgent(cfg.CONF)
-    mgr.run()
+    server = quantum_service.Service.create(
+        binary='quantum-dhcp-agent',
+        topic=topics.DHCP_AGENT,
+        report_interval=cfg.CONF.AGENT.report_interval,
+        manager='quantum.agent.dhcp_agent.DhcpAgentWithStateReport')
+    service.launch(server).wait()

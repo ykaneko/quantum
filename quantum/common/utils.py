@@ -21,13 +21,14 @@
 
 """Utilities and helper functions."""
 
+import logging as std_logging
 import os
 import signal
 import socket
 
 from eventlet.green import subprocess
+from oslo.config import cfg
 
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 
@@ -57,8 +58,7 @@ def read_cached_file(filename, cache_info, reload_func=None):
 
 
 def find_config_file(options, config_file):
-    """
-    Return the first config file found.
+    """Return the first config file found.
 
     We search for the paste config file in the following order:
     * If --config-file option is used, use that
@@ -114,7 +114,7 @@ def subprocess_popen(args, stdin=None, stdout=None, stderr=None, shell=False,
                      env=None):
     return subprocess.Popen(args, shell=shell, stdin=stdin, stdout=stdout,
                             stderr=stderr, preexec_fn=_subprocess_setup,
-                            env=env)
+                            close_fds=True, env=env)
 
 
 def parse_mappings(mapping_list, unique_values=True):
@@ -140,10 +140,11 @@ def parse_mappings(mapping_list, unique_values=True):
             raise ValueError(_("Missing value in mapping: '%s'") % mapping)
         if key in mappings:
             raise ValueError(_("Key %(key)s in mapping: '%(mapping)s' not "
-                               "unique") % locals())
+                               "unique") % {'key': key, 'mapping': mapping})
         if unique_values and value in mappings.itervalues():
             raise ValueError(_("Value %(value)s in mapping: '%(mapping)s' "
-                               "not unique") % locals())
+                               "not unique") % {'value': value,
+                                                'mapping': mapping})
         mappings[key] = value
     return mappings
 
@@ -153,7 +154,7 @@ def get_hostname():
 
 
 def compare_elements(a, b):
-    """ compare elements if a and b have same elements
+    """Compare elements if a and b have same elements.
 
     This method doesn't consider ordering
     """
@@ -162,3 +163,33 @@ def compare_elements(a, b):
     if b is None:
         b = []
     return set(a) == set(b)
+
+
+def dict2str(dic):
+    return ','.join("%s=%s" % (key, val)
+                    for key, val in sorted(dic.iteritems()))
+
+
+def str2dict(string):
+    res_dict = {}
+    for keyvalue in string.split(',', 1):
+        (key, value) = keyvalue.split('=', 1)
+        res_dict[key] = value
+    return res_dict
+
+
+def diff_list_of_dict(old_list, new_list):
+    new_set = set([dict2str(l) for l in new_list])
+    old_set = set([dict2str(l) for l in old_list])
+    added = new_set - old_set
+    removed = old_set - new_set
+    return [str2dict(a) for a in added], [str2dict(r) for r in removed]
+
+
+def is_extension_supported(plugin, ext_alias):
+    return ext_alias in getattr(
+        plugin, "supported_extension_aliases", [])
+
+
+def log_opt_values(log):
+    cfg.CONF.log_opt_values(log, std_logging.DEBUG)

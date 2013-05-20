@@ -19,28 +19,37 @@
 
 import inspect
 import os
-import unittest
 
 import mox
 
 from quantum.agent.linux import iptables_manager
+from quantum.tests import base
 
 
-class IptablesManagerStateFulTestCase(unittest.TestCase):
+class IptablesManagerStateFulTestCase(base.BaseTestCase):
 
     def setUp(self):
+        super(IptablesManagerStateFulTestCase, self).setUp()
         self.mox = mox.Mox()
         self.root_helper = 'sudo'
         self.iptables = (iptables_manager.
                          IptablesManager(root_helper=self.root_helper))
         self.mox.StubOutWithMock(self.iptables, "execute")
-
-    def tearDown(self):
-        self.mox.UnsetStubs()
+        self.addCleanup(self.mox.UnsetStubs)
 
     def test_binary_name(self):
         self.assertEqual(iptables_manager.binary_name,
                          os.path.basename(inspect.stack()[-1][1])[:16])
+
+    def test_get_chanin_name(self):
+        name = '0123456789' * 5
+        # 28 chars is the maximum length of iptables chain name.
+        self.assertEqual(iptables_manager.get_chain_name(name, wrap=False),
+                         name[:28])
+        # 11 chars is the maximum length of chain name of iptable_manager
+        # if binary_name is prepended.
+        self.assertEqual(iptables_manager.get_chain_name(name, wrap=True),
+                         name[:11])
 
     def test_add_and_remove_chain(self):
         bn = iptables_manager.binary_name
@@ -285,9 +294,10 @@ class IptablesManagerStateFulTestCase(unittest.TestCase):
         self.mox.VerifyAll()
 
 
-class IptablesManagerStateLessTestCase(unittest.TestCase):
+class IptablesManagerStateLessTestCase(base.BaseTestCase):
 
     def setUp(self):
+        super(IptablesManagerStateLessTestCase, self).setUp()
         self.iptables = (iptables_manager.IptablesManager(state_less=True))
 
     def test_nat_not_found(self):

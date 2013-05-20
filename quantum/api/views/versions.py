@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -26,7 +26,8 @@ def get_view_builder(req):
 class ViewBuilder(object):
 
     def __init__(self, base_url):
-        """
+        """Object initialization.
+
         :param base_url: url of the root wsgi application
         """
         self.base_url = base_url

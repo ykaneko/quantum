@@ -24,11 +24,12 @@ import re
 import sys
 import time
 
+from oslo.config import cfg
+
 from quantum.agent import rpc as agent_rpc
 from quantum.common import config as logging_config
 from quantum.common import topics
 from quantum import context
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 from quantum.openstack.common.rpc import dispatcher
 from quantum.plugins.hyperv.agent import utils
@@ -151,18 +152,18 @@ class HyperVQuantumAgent(object):
 
         vswitch_name = self._get_vswitch_name(network_type, physical_network)
 
-        if network_type == constants.TYPE_VLAN:
-            self._utils.add_vlan_id_to_vswitch(segmentation_id, vswitch_name)
-        elif network_type == constants.TYPE_FLAT:
-            self._utils.set_vswitch_mode_access(vswitch_name)
+        if network_type in [constants.TYPE_VLAN, constants.TYPE_FLAT]:
+            #Nothing to do
+            pass
         elif network_type == constants.TYPE_LOCAL:
-            #TODO (alexpilotti): Check that the switch type is private
+            #TODO(alexpilotti): Check that the switch type is private
             #or create it if not existing
             pass
         else:
-            raise utils.HyperVException(_("Cannot provision unknown network "
-                                          "type %s for network %s"),
-                                        network_type, net_uuid)
+            raise utils.HyperVException(
+                _("Cannot provision unknown network type %(network_type)s "
+                  "for network %(net_uuid)s"),
+                dict(network_type=network_type, net_uuid=net_uuid))
 
         map = {
             'network_type': network_type,
@@ -173,17 +174,6 @@ class HyperVQuantumAgent(object):
 
     def _reclaim_local_network(self, net_uuid):
         LOG.info(_("Reclaiming local network %s"), net_uuid)
-        map = self._network_vswitch_map[net_uuid]
-
-        if map['network_type'] == constants.TYPE_VLAN:
-            LOG.info(_("Reclaiming VLAN ID %s "), map['vlan_id'])
-            self._utils.remove_vlan_id_from_vswitch(
-                map['vlan_id'], map['vswitch_name'])
-        else:
-            raise utils.HyperVException(_("Cannot reclaim unsupported "
-                                          "network type %s for network %s"),
-                                        map['network_type'], net_uuid)
-
         del self._network_vswitch_map[net_uuid]
 
     def _port_bound(self, port_id,
@@ -204,8 +194,9 @@ class HyperVQuantumAgent(object):
         self._utils.connect_vnic_to_vswitch(map['vswitch_name'], port_id)
 
         if network_type == constants.TYPE_VLAN:
-            LOG.info(_('Binding VLAN ID %s to switch port %s'),
-                     segmentation_id, port_id)
+            LOG.info(_('Binding VLAN ID %(segmentation_id)s '
+                       'to switch port %(port_id)s'),
+                     dict(segmentation_id=segmentation_id, port_id=port_id))
             self._utils.set_vswitch_port_vlan_id(
                 segmentation_id,
                 port_id)
@@ -220,7 +211,7 @@ class HyperVQuantumAgent(object):
 
     def _port_unbound(self, port_id):
         (net_uuid, map) = self._get_network_vswitch_map_by_port_id(port_id)
-        if not net_uuid in self._network_vswitch_map:
+        if net_uuid not in self._network_vswitch_map:
             LOG.info(_('Network %s is not avalailable on this agent'),
                      net_uuid)
             return
@@ -264,14 +255,14 @@ class HyperVQuantumAgent(object):
                     self.agent_id)
             except Exception as e:
                 LOG.debug(_(
-                    "Unable to get port details for device %s: %s"),
-                    device, e)
+                    "Unable to get port details for device %(device)s: %(e)s"),
+                    dict(device=device, e=e))
                 resync = True
                 continue
             if 'port_id' in device_details:
                 LOG.info(_(
                     "Port %(device)s updated. Details: %(device_details)s") %
-                    locals())
+                    dict(device=device, device_details=device_details))
                 self._treat_vif_port(
                     device_details['port_id'],
                     device_details['network_id'],
@@ -290,8 +281,9 @@ class HyperVQuantumAgent(object):
                                                    device,
                                                    self.agent_id)
             except Exception as e:
-                LOG.debug(_("Removing port failed for device %s: %s"),
-                          device, e)
+                LOG.debug(
+                    _("Removing port failed for device %(device)s: %(e)s"),
+                    dict(device=device, e=e))
                 resync = True
                 continue
             self._port_unbound(device)

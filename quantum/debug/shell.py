@@ -17,10 +17,11 @@
 
 import sys
 
+from oslo.config import cfg
+
 from quantum.agent.common import config
 from quantum.agent.linux import interface
 from quantum.debug.debug_agent import QuantumDebugAgent
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
 from quantumclient.common import exceptions as exc
 from quantumclient.common import utils
@@ -69,6 +70,7 @@ class QuantumDebugShell(QuantumShell):
         client = self.client_manager.quantum
         cfg.CONF.register_opts(interface.OPTS)
         cfg.CONF.register_opts(QuantumDebugAgent.OPTS)
+        config.register_root_helper(cfg.CONF)
         cfg.CONF(['--config-file', self.options.config_file])
         config.setup_logging(cfg.CONF)
         driver = importutils.import_object(cfg.CONF.interface_driver, cfg.CONF)

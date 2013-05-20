@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -46,16 +46,20 @@ EXTENDED_ATTRIBUTES_2_0 = {
     'ports': {
         VIF_TYPE: {'allow_post': False, 'allow_put': False,
                    'default': attributes.ATTR_NOT_SPECIFIED,
+                   'enforce_policy': True,
                    'is_visible': True},
         HOST_ID: {'allow_post': True, 'allow_put': True,
                   'default': attributes.ATTR_NOT_SPECIFIED,
-                  'is_visible': True},
+                  'is_visible': True,
+                  'enforce_policy': True},
         PROFILE: {'allow_post': True, 'allow_put': True,
                   'default': attributes.ATTR_NOT_SPECIFIED,
+                  'enforce_policy': True,
                   'validate': {'type:dict': None},
                   'is_visible': True},
         CAPABILITIES: {'allow_post': False, 'allow_put': False,
                        'default': attributes.ATTR_NOT_SPECIFIED,
+                       'enforce_policy': True,
                        'is_visible': True},
     }
 }

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,6 +17,8 @@
 
 import abc
 
+from oslo.config import cfg
+
 from quantum.api import extensions
 from quantum.api.v2 import attributes as attr
 from quantum.api.v2 import base
@@ -29,6 +31,10 @@ from quantum.plugins.services.service_base import ServicePluginBase
 # Loadbalancer Exceptions
 class VipNotFound(qexception.NotFound):
     message = _("Vip %(vip_id)s could not be found")
+
+
+class VipExists(qexception.QuantumException):
+    message = _("Another Vip already exists for pool %(pool_id)s")
 
 
 class PoolNotFound(qexception.NotFound):
@@ -55,17 +61,24 @@ class PoolStatsNotFound(qexception.NotFound):
     message = _("Statistics of Pool %(pool_id)s could not be found")
 
 
+class ProtocolMismatch(qexception.BadRequest):
+    message = _("Protocol %(vip_proto)s does not match "
+                "pool protocol %(pool_proto)s")
+
+
 RESOURCE_ATTRIBUTE_MAP = {
     'vips': {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'validate': {'type:string': None},
                       'required_by_policy': True,
                       'is_visible': True},
         'name': {'allow_post': True, 'allow_put': True,
                  'validate': {'type:string': None},
+                 'default': '',
                  'is_visible': True},
         'description': {'allow_post': True, 'allow_put': True,
                         'validate': {'type:string': None},
@@ -77,19 +90,30 @@ RESOURCE_ATTRIBUTE_MAP = {
                     'default': attr.ATTR_NOT_SPECIFIED,
                     'validate': {'type:ip_address_or_none': None},
                     'is_visible': True},
-        'port': {'allow_post': True, 'allow_put': False,
-                 'validate': {'type:range': [0, 65535]},
-                 'convert_to': attr.convert_to_int,
-                 'is_visible': True},
+        'port_id': {'allow_post': False, 'allow_put': False,
+                    'validate': {'type:uuid': None},
+                    'is_visible': True},
+        'protocol_port': {'allow_post': True, 'allow_put': False,
+                          'validate': {'type:range': [0, 65535]},
+                          'convert_to': attr.convert_to_int,
+                          'is_visible': True},
         'protocol': {'allow_post': True, 'allow_put': False,
-                     'validate': {'type:string': None},
+                     'validate': {'type:values': ['TCP', 'HTTP', 'HTTPS']},
                      'is_visible': True},
         'pool_id': {'allow_post': True, 'allow_put': True,
                     'validate': {'type:uuid': None},
                     'is_visible': True},
         'session_persistence': {'allow_post': True, 'allow_put': True,
+                                'convert_to': attr.convert_none_to_empty_dict,
                                 'default': {},
-                                'validate': {'type:dict': None},
+                                'validate': {
+                                    'type:dict_or_empty': {
+                                        'type': {'type:values': ['APP_COOKIE',
+                                                                 'HTTP_COOKIE',
+                                                                 'SOURCE_IP'],
+                                                 'required': True},
+                                        'cookie_name': {'type:string': None,
+                                                        'required': False}}},
                                 'is_visible': True},
         'connection_limit': {'allow_post': True, 'allow_put': True,
                              'default': -1,
@@ -105,7 +129,8 @@ RESOURCE_ATTRIBUTE_MAP = {
     'pools': {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'validate': {'type:string': None},
                       'required_by_policy': True,
@@ -114,6 +139,7 @@ RESOURCE_ATTRIBUTE_MAP = {
                    'is_visible': True},
         'name': {'allow_post': True, 'allow_put': True,
                  'validate': {'type:string': None},
+                 'default': '',
                  'is_visible': True},
         'description': {'allow_post': True, 'allow_put': True,
                         'validate': {'type:string': None},
@@ -122,7 +148,7 @@ RESOURCE_ATTRIBUTE_MAP = {
                       'validate': {'type:uuid': None},
                       'is_visible': True},
         'protocol': {'allow_post': True, 'allow_put': False,
-                     'validate': {'type:string': None},
+                     'validate': {'type:values': ['TCP', 'HTTP', 'HTTPS']},
                      'is_visible': True},
         'lb_method': {'allow_post': True, 'allow_put': True,
                       'validate': {'type:string': None},
@@ -144,7 +170,8 @@ RESOURCE_ATTRIBUTE_MAP = {
     'members': {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'validate': {'type:string': None},
                       'required_by_policy': True,
@@ -155,10 +182,10 @@ RESOURCE_ATTRIBUTE_MAP = {
         'address': {'allow_post': True, 'allow_put': False,
                     'validate': {'type:ip_address': None},
                     'is_visible': True},
-        'port': {'allow_post': True, 'allow_put': False,
-                 'validate': {'type:range': [0, 65535]},
-                 'convert_to': attr.convert_to_int,
-                 'is_visible': True},
+        'protocol_port': {'allow_post': True, 'allow_put': False,
+                          'validate': {'type:range': [0, 65535]},
+                          'convert_to': attr.convert_to_int,
+                          'is_visible': True},
         'weight': {'allow_post': True, 'allow_put': True,
                    'default': 1,
                    'validate': {'type:range': [0, 256]},
@@ -174,7 +201,8 @@ RESOURCE_ATTRIBUTE_MAP = {
     'health_monitors': {
         'id': {'allow_post': False, 'allow_put': False,
                'validate': {'type:uuid': None},
-               'is_visible': True},
+               'is_visible': True,
+               'primary_key': True},
         'tenant_id': {'allow_post': True, 'allow_put': False,
                       'validate': {'type:string': None},
                       'required_by_policy': True,
@@ -256,6 +284,8 @@ class Loadbalancer(extensions.ExtensionDescriptor):
 
     @classmethod
     def get_resources(cls):
+        my_plurals = [(key, key[:-1]) for key in RESOURCE_ATTRIBUTE_MAP.keys()]
+        attr.PLURALS.update(dict(my_plurals))
         resources = []
         plugin = manager.QuantumManager.get_service_plugins()[
             constants.LOADBALANCER]
@@ -269,16 +299,18 @@ class Loadbalancer(extensions.ExtensionDescriptor):
             if resource_name == 'pool':
                 member_actions = {'stats': 'GET'}
 
-            controller = base.create_resource(collection_name,
-                                              resource_name,
-                                              plugin, params,
-                                              member_actions=member_actions)
+            controller = base.create_resource(
+                collection_name, resource_name, plugin, params,
+                member_actions=member_actions,
+                allow_pagination=cfg.CONF.allow_pagination,
+                allow_sorting=cfg.CONF.allow_sorting)
 
             resource = extensions.ResourceExtension(
                 collection_name,
                 controller,
                 path_prefix=constants.COMMON_PREFIXES[constants.LOADBALANCER],
-                member_actions=member_actions)
+                member_actions=member_actions,
+                attr_map=params)
             resources.append(resource)
 
         for collection_name in SUB_RESOURCE_ATTRIBUTE_MAP:
@@ -297,7 +329,8 @@ class Loadbalancer(extensions.ExtensionDescriptor):
             resource = extensions.ResourceExtension(
                 collection_name,
                 controller, parent,
-                path_prefix=constants.COMMON_PREFIXES[constants.LOADBALANCER])
+                path_prefix=constants.COMMON_PREFIXES[constants.LOADBALANCER],
+                attr_map=params)
             resources.append(resource)
 
         return resources
@@ -305,6 +338,16 @@ class Loadbalancer(extensions.ExtensionDescriptor):
     @classmethod
     def get_plugin_interface(cls):
         return LoadBalancerPluginBase
+
+    def update_attributes_map(self, attributes):
+        super(Loadbalancer, self).update_attributes_map(
+            attributes, extension_attrs_map=RESOURCE_ATTRIBUTE_MAP)
+
+    def get_extended_resources(self, version):
+        if version == "2.0":
+            return RESOURCE_ATTRIBUTE_MAP
+        else:
+            return {}
 
 
 class LoadBalancerPluginBase(ServicePluginBase):

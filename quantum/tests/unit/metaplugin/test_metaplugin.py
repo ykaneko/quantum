@@ -19,17 +19,17 @@ import os
 
 import mock
 import mox
+from oslo.config import cfg
 import stubout
-import unittest2 as unittest
+import testtools
 
 from quantum import context
 from quantum.db import api as db
-from quantum.db import models_v2
 from quantum.extensions.flavor import (FLAVOR_NETWORK, FLAVOR_ROUTER)
-from quantum.openstack.common import cfg
 from quantum.openstack.common import uuidutils
 from quantum.plugins.metaplugin.meta_quantum_plugin import FlavorNotFound
 from quantum.plugins.metaplugin.meta_quantum_plugin import MetaPluginV2
+from quantum.tests import base
 
 CONF_FILE = ""
 ROOTDIR = os.path.dirname(os.path.dirname(__file__))
@@ -63,10 +63,12 @@ def setup_metaplugin_conf():
     cfg.CONF.set_override('base_mac', "12:34:56:78:90:ab")
     #TODO(nati) remove this after subnet quota change is merged
     cfg.CONF.set_override('max_dns_nameservers', 10)
+    cfg.CONF.set_override('rpc_backend',
+                          'quantum.openstack.common.rpc.impl_fake')
 
 
-class MetaQuantumPluginV2Test(unittest.TestCase):
-    """Class conisting of MetaQuantumPluginV2 unit tests"""
+class MetaQuantumPluginV2Test(base.BaseTestCase):
+    """Class conisting of MetaQuantumPluginV2 unit tests."""
 
     def setUp(self):
         super(MetaQuantumPluginV2Test, self).setUp()
@@ -81,7 +83,6 @@ class MetaQuantumPluginV2Test(unittest.TestCase):
 
         self.mox = mox.Mox()
         self.stubs = stubout.StubOutForTesting()
-        args = ['--config-file', etcdir('quantum.conf.test')]
         self.client_cls_p = mock.patch('quantumclient.v2_0.client.Client')
         client_cls = self.client_cls_p.start()
         self.client_inst = mock.Mock()
@@ -287,7 +288,7 @@ class MetaQuantumPluginV2Test(unittest.TestCase):
 
         self.plugin.delete_router(self.context, router_ret1['id'])
         self.plugin.delete_router(self.context, router_ret2['id'])
-        with self.assertRaises(FlavorNotFound):
+        with testtools.ExpectedException(FlavorNotFound):
             self.plugin.get_router(self.context, router_ret1['id'])
 
     def test_extension_method(self):
@@ -299,7 +300,7 @@ class MetaQuantumPluginV2Test(unittest.TestCase):
             self.plugin.not_implemented()
         except AttributeError:
             return
-        except:
+        except Exception:
             self.fail("AttributeError Error is not raised")
 
         self.fail("No Error is not raised")
@@ -310,3 +311,4 @@ class MetaQuantumPluginV2Test(unittest.TestCase):
         self.stubs.SmartUnsetAll()
         self.mox.VerifyAll()
         db.clear_db()
+        super(MetaQuantumPluginV2Test, self).tearDown()

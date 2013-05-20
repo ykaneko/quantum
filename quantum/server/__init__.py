@@ -21,8 +21,9 @@
 
 import sys
 
+from oslo.config import cfg
+
 from quantum.common import config
-from quantum.openstack.common import cfg
 from quantum import service
 
 
@@ -36,7 +37,7 @@ def main():
     try:
         quantum_service = service.serve_wsgi(service.QuantumApiService)
         quantum_service.wait()
-    except RuntimeError, e:
+    except RuntimeError as e:
         sys.exit(_("ERROR: %s") % e)
 
 

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,21 +18,59 @@
 """
 Utility methods for working with WSGI servers
 """
+import errno
+import os
 import socket
+import ssl
 import sys
-from xml.dom import minidom
+import time
+from xml.etree import ElementTree as etree
 from xml.parsers import expat
 
 import eventlet.wsgi
 eventlet.patcher.monkey_patch(all=False, socket=True)
+from oslo.config import cfg
 import routes.middleware
 import webob.dec
 import webob.exc
 
+from quantum.common import constants
 from quantum.common import exceptions as exception
 from quantum import context
 from quantum.openstack.common import jsonutils
 from quantum.openstack.common import log as logging
+
+socket_opts = [
+    cfg.IntOpt('backlog',
+               default=4096,
+               help=_("Number of backlog requests to configure "
+                      "the socket with")),
+    cfg.IntOpt('tcp_keepidle',
+               default=600,
+               help=_("Sets the value of TCP_KEEPIDLE in seconds for each "
+                      "server socket. Not supported on OS X.")),
+    cfg.IntOpt('retry_until_window',
+               default=30,
+               help=_("Number of seconds to keep retrying to listen")),
+    cfg.BoolOpt('use_ssl',
+                default=False,
+                help=_('Enable SSL on the API server')),
+    cfg.StrOpt('ssl_ca_file',
+               default=None,
+               help=_("CA certificate file to use to verify "
+                      "connecting clients")),
+    cfg.StrOpt('ssl_cert_file',
+               default=None,
+               help=_("Certificate file to use when starting "
+                      "the server securely")),
+    cfg.StrOpt('ssl_key_file',
+               default=None,
+               help=_("Private key file to use when starting "
+                      "the server securely")),
+]
+
+CONF = cfg.CONF
+CONF.register_opts(socket_opts)
 
 LOG = logging.getLogger(__name__)
 
@@ -50,30 +88,92 @@ class Server(object):
         self.pool = eventlet.GreenPool(threads)
         self.name = name
 
-    def start(self, application, port, host='0.0.0.0', backlog=128):
-        """Run a WSGI server with the given application."""
-        self._host = host
-        self._port = port
-
+    def _get_socket(self, host, port, backlog):
+        bind_addr = (host, port)
         # TODO(dims): eventlet's green dns/socket module does not actually
         # support IPv6 in getaddrinfo(). We need to get around this in the
         # future or monitor upstream for a fix
         try:
-            info = socket.getaddrinfo(self._host,
-                                      self._port,
+            info = socket.getaddrinfo(bind_addr[0],
+                                      bind_addr[1],
                                       socket.AF_UNSPEC,
                                       socket.SOCK_STREAM)[0]
             family = info[0]
             bind_addr = info[-1]
-
-            self._socket = eventlet.listen(bind_addr,
-                                           family=family,
-                                           backlog=backlog)
-        except:
+        except Exception:
             LOG.exception(_("Unable to listen on %(host)s:%(port)s") %
                           {'host': host, 'port': port})
             sys.exit(1)
 
+        if CONF.use_ssl:
+            if not os.path.exists(CONF.ssl_cert_file):
+                raise RuntimeError(_("Unable to find ssl_cert_file "
+                                     ": %s") % CONF.ssl_cert_file)
+
+            if not os.path.exists(CONF.ssl_key_file):
+                raise RuntimeError(_("Unable to find "
+                                     "ssl_key_file : %s") % CONF.ssl_key_file)
+
+            # ssl_ca_file is optional
+            if CONF.ssl_ca_file and not os.path.exists(CONF.ssl_ca_file):
+                raise RuntimeError(_("Unable to find ssl_ca_file "
+                                     ": %s") % CONF.ssl_ca_file)
+
+        def wrap_ssl(sock):
+            ssl_kwargs = {
+                'server_side': True,
+                'certfile': CONF.ssl_cert_file,
+                'keyfile': CONF.ssl_key_file,
+                'cert_reqs': ssl.CERT_NONE,
+            }
+
+            if CONF.ssl_ca_file:
+                ssl_kwargs['ca_certs'] = CONF.ssl_ca_file
+                ssl_kwargs['cert_reqs'] = ssl.CERT_REQUIRED
+
+            return ssl.wrap_socket(sock, **ssl_kwargs)
+
+        sock = None
+        retry_until = time.time() + CONF.retry_until_window
+        while not sock and time.time() < retry_until:
+            try:
+                sock = eventlet.listen(bind_addr,
+                                       backlog=backlog,
+                                       family=family)
+                if CONF.use_ssl:
+                    sock = wrap_ssl(sock)
+
+            except socket.error as err:
+                if err.errno != errno.EADDRINUSE:
+                    raise
+                eventlet.sleep(0.1)
+        if not sock:
+            raise RuntimeError(_("Could not bind to %(host)s:%(port)s "
+                               "after trying for %(time)d seconds") %
+                               {'host': host,
+                                'port': port,
+                                'time': CONF.retry_until_window})
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # sockets can hang around forever without keepalive
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+        # This option isn't available in the OS X version of eventlet
+        if hasattr(socket, 'TCP_KEEPIDLE'):
+            sock.setsockopt(socket.IPPROTO_TCP,
+                            socket.TCP_KEEPIDLE,
+                            CONF.tcp_keepidle)
+
+        return sock
+
+    def start(self, application, port, host='0.0.0.0'):
+        """Run a WSGI server with the given application."""
+        self._host = host
+        self._port = port
+        backlog = CONF.backlog
+
+        self._socket = self._get_socket(self._host,
+                                        self._port,
+                                        backlog=backlog)
         self._server = self.pool.spawn(self._run, application, self._socket)
 
     @property
@@ -102,11 +202,11 @@ class Server(object):
 
 
 class Middleware(object):
-    """
-    Base WSGI middleware wrapper. These classes require an application to be
-    initialized that will be called next.  By default the middleware will
-    simply call its wrapped app, or you can override __call__ to customize its
-    behavior.
+    """Base WSGI middleware wrapper.
+
+    These classes require an application to be initialized that will be called
+    next.  By default the middleware will simply call its wrapped app, or you
+    can override __call__ to customize its behavior.
     """
 
     @classmethod
@@ -140,8 +240,7 @@ class Middleware(object):
         self.application = application
 
     def process_request(self, req):
-        """
-        Called on each request.
+        """Called on each request.
 
         If this returns None, the next application down the stack will be
         executed. If it returns a response then that response will be returned
@@ -173,12 +272,12 @@ class Request(webob.Request):
             2) Content-type header
             3) Accept* headers
         """
-        # First lookup http request
+        # First lookup http request path
         parts = self.path.rsplit('.', 1)
         if len(parts) > 1:
-            format = parts[1]
-            if format in ['json', 'xml']:
-                return 'application/{0}'.format(parts[1])
+            _format = parts[1]
+            if _format in ['json', 'xml']:
+                return 'application/{0}'.format(_format)
 
         #Then look up content header
         type_from_header = self.get_content_type()
@@ -192,12 +291,12 @@ class Request(webob.Request):
 
     def get_content_type(self):
         allowed_types = ("application/xml", "application/json")
-        if not "Content-Type" in self.headers:
+        if "Content-Type" not in self.headers:
             LOG.debug(_("Missing Content-Type"))
             return None
-        type = self.content_type
-        if type in allowed_types:
-            return type
+        _type = self.content_type
+        if _type in allowed_types:
+            return _type
         return None
 
     @property
@@ -221,7 +320,7 @@ class ActionDispatcher(object):
 
 
 class DictSerializer(ActionDispatcher):
-    """Default request body serialization"""
+    """Default request body serialization."""
 
     def serialize(self, data, action='default'):
         return self.dispatch(data, action=action)
@@ -231,31 +330,63 @@ class DictSerializer(ActionDispatcher):
 
 
 class JSONDictSerializer(DictSerializer):
-    """Default JSON request body serialization"""
+    """Default JSON request body serialization."""
 
     def default(self, data):
-        return jsonutils.dumps(data)
+        def sanitizer(obj):
+            return unicode(obj)
+        return jsonutils.dumps(data, default=sanitizer)
 
 
 class XMLDictSerializer(DictSerializer):
 
     def __init__(self, metadata=None, xmlns=None):
-        """
+        """Object initialization.
+
         :param metadata: information needed to deserialize xml into
                          a dictionary.
         :param xmlns: XML namespace to include with serialized xml
         """
         super(XMLDictSerializer, self).__init__()
         self.metadata = metadata or {}
+        if not xmlns:
+            xmlns = self.metadata.get('xmlns')
+        if not xmlns:
+            xmlns = constants.XML_NS_V20
         self.xmlns = xmlns
 
     def default(self, data):
-        # We expect data to contain a single key which is the XML root.
-        root_key = data.keys()[0]
-        doc = minidom.Document()
-        node = self._to_xml_node(doc, self.metadata, root_key, data[root_key])
+        """Return data as XML string.
 
-        return self.to_xml_string(node)
+        :param data: expect data to contain a single key as XML root, or
+                     contain another '*_links' key as atom links. Other
+                     case will use 'VIRTUAL_ROOT_KEY' as XML root.
+        """
+        try:
+            links = None
+            has_atom = False
+            if data is None:
+                root_key = constants.VIRTUAL_ROOT_KEY
+                root_value = None
+            else:
+                link_keys = [k for k in data.iterkeys() or []
+                             if k.endswith('_links')]
+                if link_keys:
+                    links = data.pop(link_keys[0], None)
+                    has_atom = True
+                root_key = (len(data) == 1 and
+                            data.keys()[0] or constants.VIRTUAL_ROOT_KEY)
+                root_value = data.get(root_key, data)
+            doc = etree.Element("_temp_root")
+            used_prefixes = []
+            self._to_xml_node(doc, self.metadata, root_key,
+                              root_value, used_prefixes)
+            if links:
+                self._create_link_nodes(list(doc)[0], links)
+            return self.to_xml_string(list(doc)[0], used_prefixes, has_atom)
+        except AttributeError as e:
+            LOG.exception(str(e))
+            return ''
 
     def __call__(self, data):
         # Provides a migration path to a cleaner WSGI layer, this
@@ -263,39 +394,36 @@ class XMLDictSerializer(DictSerializer):
         # like originally intended
         return self.default(data)
 
-    def to_xml_string(self, node, has_atom=False):
-        self._add_xmlns(node, has_atom)
-        return node.toxml('UTF-8')
+    def to_xml_string(self, node, used_prefixes, has_atom=False):
+        self._add_xmlns(node, used_prefixes, has_atom)
+        return etree.tostring(node, encoding='UTF-8')
 
     #NOTE (ameade): the has_atom should be removed after all of the
     # xml serializers and view builders have been updated to the current
     # spec that required all responses include the xmlns:atom, the has_atom
     # flag is to prevent current tests from breaking
-    def _add_xmlns(self, node, has_atom=False):
-        if self.xmlns is not None:
-            node.setAttribute('xmlns', self.xmlns)
+    def _add_xmlns(self, node, used_prefixes, has_atom=False):
+        node.set('xmlns', self.xmlns)
+        node.set(constants.TYPE_XMLNS, self.xmlns)
         if has_atom:
-            node.setAttribute('xmlns:atom', "http://www.w3.org/2005/Atom")
+            node.set(constants.ATOM_XMLNS, constants.ATOM_NAMESPACE)
+        node.set(constants.XSI_NIL_ATTR, constants.XSI_NAMESPACE)
+        ext_ns = self.metadata.get(constants.EXT_NS, {})
+        for prefix in used_prefixes:
+            if prefix in ext_ns:
+                node.set('xmlns:' + prefix, ext_ns[prefix])
 
-    def _to_xml_node(self, doc, metadata, nodename, data):
+    def _to_xml_node(self, parent, metadata, nodename, data, used_prefixes):
         """Recursive method to convert data members to XML nodes."""
-        result = doc.createElement(nodename)
-
-        # Set the xml namespace if one is specified
-        # TODO(justinsb): We could also use prefixes on the keys
-        xmlns = metadata.get('xmlns', None)
-        if xmlns:
-            result.setAttribute('xmlns', xmlns)
-
+        result = etree.SubElement(parent, nodename)
+        if ":" in nodename:
+            used_prefixes.append(nodename.split(":", 1)[0])
         #TODO(bcwaldon): accomplish this without a type-check
         if isinstance(data, list):
-            collections = metadata.get('list_collections', {})
-            if nodename in collections:
-                metadata = collections[nodename]
-                for item in data:
-                    node = doc.createElement(metadata['item_name'])
-                    node.setAttribute(metadata['item_key'], str(item))
-                    result.appendChild(node)
+            if not data:
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_LIST)
                 return result
             singular = metadata.get('plurals', {}).get(nodename, None)
             if singular is None:
@@ -304,47 +432,59 @@ class XMLDictSerializer(DictSerializer):
                 else:
                     singular = 'item'
             for item in data:
-                node = self._to_xml_node(doc, metadata, singular, item)
-                result.appendChild(node)
+                self._to_xml_node(result, metadata, singular, item,
+                                  used_prefixes)
         #TODO(bcwaldon): accomplish this without a type-check
         elif isinstance(data, dict):
-            collections = metadata.get('dict_collections', {})
-            if nodename in collections:
-                metadata = collections[nodename]
-                for k, v in data.items():
-                    node = doc.createElement(metadata['item_name'])
-                    node.setAttribute(metadata['item_key'], str(k))
-                    text = doc.createTextNode(str(v))
-                    node.appendChild(text)
-                    result.appendChild(node)
+            if not data:
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_DICT)
                 return result
             attrs = metadata.get('attributes', {}).get(nodename, {})
             for k, v in data.items():
                 if k in attrs:
-                    result.setAttribute(k, str(v))
+                    result.set(k, str(v))
                 else:
-                    node = self._to_xml_node(doc, metadata, k, v)
-                    result.appendChild(node)
+                    self._to_xml_node(result, metadata, k, v,
+                                      used_prefixes)
+        elif data is None:
+            result.set(constants.XSI_ATTR, 'true')
         else:
-            # Type is atom
-            node = doc.createTextNode(str(data))
-            result.appendChild(node)
+            if isinstance(data, bool):
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_BOOL)
+            elif isinstance(data, int):
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_INT)
+            elif isinstance(data, long):
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_LONG)
+            elif isinstance(data, float):
+                result.set(
+                    constants.TYPE_ATTR,
+                    constants.TYPE_FLOAT)
+            LOG.debug(_("Data %(data)s type is %(type)s"),
+                      {'data': data,
+                       'type': type(data)})
+            if isinstance(data, str):
+                result.text = unicode(data, 'utf-8')
+            else:
+                result.text = unicode(data)
         return result
 
     def _create_link_nodes(self, xml_doc, links):
-        link_nodes = []
         for link in links:
-            link_node = xml_doc.createElement('atom:link')
-            link_node.setAttribute('rel', link['rel'])
-            link_node.setAttribute('href', link['href'])
-            if 'type' in link:
-                link_node.setAttribute('type', link['type'])
-            link_nodes.append(link_node)
-        return link_nodes
+            link_node = etree.SubElement(xml_doc, 'atom:link')
+            link_node.set('rel', link['rel'])
+            link_node.set('href', link['href'])
 
 
 class ResponseHeaderSerializer(ActionDispatcher):
-    """Default response headers serialization"""
+    """Default response headers serialization."""
 
     def serialize(self, response, data, action):
         self.dispatch(response, data, action=action)
@@ -354,7 +494,7 @@ class ResponseHeaderSerializer(ActionDispatcher):
 
 
 class ResponseSerializer(object):
-    """Encode the necessary pieces into a response object"""
+    """Encode the necessary pieces into a response object."""
 
     def __init__(self, body_serializers=None, headers_serializer=None):
         self.body_serializers = {
@@ -395,7 +535,7 @@ class ResponseSerializer(object):
 
 
 class TextDeserializer(ActionDispatcher):
-    """Default request body deserialization"""
+    """Default request body deserialization."""
 
     def deserialize(self, datastring, action='default'):
         return self.dispatch(datastring, action=action)
@@ -417,24 +557,95 @@ class JSONDeserializer(TextDeserializer):
         return {'body': self._from_json(datastring)}
 
 
+class ProtectedXMLParser(etree.XMLParser):
+    def __init__(self, *args, **kwargs):
+        etree.XMLParser.__init__(self, *args, **kwargs)
+        self._parser.StartDoctypeDeclHandler = self.start_doctype_decl
+
+    def start_doctype_decl(self, name, sysid, pubid, internal):
+        raise ValueError(_("Inline DTD forbidden"))
+
+    def doctype(self, name, pubid, system):
+        raise ValueError(_("Inline DTD forbidden"))
+
+
 class XMLDeserializer(TextDeserializer):
 
     def __init__(self, metadata=None):
-        """
+        """Object initialization.
+
         :param metadata: information needed to deserialize xml into
                          a dictionary.
         """
         super(XMLDeserializer, self).__init__()
         self.metadata = metadata or {}
+        xmlns = self.metadata.get('xmlns')
+        if not xmlns:
+            xmlns = constants.XML_NS_V20
+        self.xmlns = xmlns
+
+    def _get_key(self, tag):
+        tags = tag.split("}", 1)
+        if len(tags) == 2:
+            ns = tags[0][1:]
+            bare_tag = tags[1]
+            ext_ns = self.metadata.get(constants.EXT_NS, {})
+            if ns == self.xmlns:
+                return bare_tag
+            for prefix, _ns in ext_ns.items():
+                if ns == _ns:
+                    return prefix + ":" + bare_tag
+        else:
+            return tag
+
+    def _get_links(self, root_tag, node):
+        link_nodes = node.findall(constants.ATOM_LINK_NOTATION)
+        root_tag = self._get_key(node.tag)
+        link_key = "%s_links" % root_tag
+        link_list = []
+        for link in link_nodes:
+            link_list.append({'rel': link.get('rel'),
+                              'href': link.get('href')})
+            # Remove link node in order to avoid link node process as
+            # an item in _from_xml_node
+            node.remove(link)
+        return link_list and {link_key: link_list} or {}
+
+    def _parseXML(self, text):
+        parser = ProtectedXMLParser()
+        parser.feed(text)
+        return parser.close()
 
     def _from_xml(self, datastring):
+        if datastring is None:
+            return None
         plurals = set(self.metadata.get('plurals', {}))
         try:
-            node = minidom.parseString(datastring).childNodes[0]
-            return {node.nodeName: self._from_xml_node(node, plurals)}
-        except expat.ExpatError:
-            msg = _("Cannot understand XML")
-            raise exception.MalformedRequestBody(reason=msg)
+            node = self._parseXML(datastring)
+            root_tag = self._get_key(node.tag)
+            # Deserialize link node was needed by unit test for verifying
+            # the request's response
+            links = self._get_links(root_tag, node)
+            result = self._from_xml_node(node, plurals)
+            # root_tag = constants.VIRTUAL_ROOT_KEY and links is not None
+            # is not possible because of the way data are serialized.
+            if root_tag == constants.VIRTUAL_ROOT_KEY:
+                return result
+            return dict({root_tag: result}, **links)
+        except Exception as e:
+            parseError = False
+            # Python2.7
+            if (hasattr(etree, 'ParseError') and
+                isinstance(e, getattr(etree, 'ParseError'))):
+                parseError = True
+            # Python2.6
+            elif isinstance(e, expat.ExpatError):
+                parseError = True
+            if parseError:
+                msg = _("Cannot understand XML")
+                raise exception.MalformedRequestBody(reason=msg)
+            else:
+                raise
 
     def _from_xml_node(self, node, listnames):
         """Convert a minidom node to a simple Python type.
@@ -443,40 +654,47 @@ class XMLDeserializer(TextDeserializer):
                           be considered list items.
 
         """
-        if len(node.childNodes) == 1 and node.childNodes[0].nodeType == 3:
-            return node.childNodes[0].nodeValue
-        elif node.nodeName in listnames:
-            return [self._from_xml_node(n, listnames) for n in node.childNodes]
+        attrNil = node.get(str(etree.QName(constants.XSI_NAMESPACE, "nil")))
+        attrType = node.get(str(etree.QName(
+            self.metadata.get('xmlns'), "type")))
+        if (attrNil and attrNil.lower() == 'true'):
+            return None
+        elif not len(node) and not node.text:
+            if (attrType and attrType == constants.TYPE_DICT):
+                return {}
+            elif (attrType and attrType == constants.TYPE_LIST):
+                return []
+            else:
+                return ''
+        elif (len(node) == 0 and node.text):
+            converters = {constants.TYPE_BOOL:
+                          lambda x: x.lower() == 'true',
+                          constants.TYPE_INT:
+                          lambda x: int(x),
+                          constants.TYPE_LONG:
+                          lambda x: long(x),
+                          constants.TYPE_FLOAT:
+                          lambda x: float(x)}
+            if attrType and attrType in converters:
+                return converters[attrType](node.text)
+            else:
+                return node.text
+        elif self._get_key(node.tag) in listnames:
+            return [self._from_xml_node(n, listnames) for n in node]
         else:
             result = dict()
-            for attr in node.attributes.keys():
-                result[attr] = node.attributes[attr].nodeValue
-            for child in node.childNodes:
-                if child.nodeType != node.TEXT_NODE:
-                    result[child.nodeName] = self._from_xml_node(child,
-                                                                 listnames)
+            for attr in node.keys():
+                if (attr == 'xmlns' or
+                    attr.startswith('xmlns:') or
+                    attr == constants.XSI_ATTR or
+                    attr == constants.TYPE_ATTR):
+                    continue
+                result[self._get_key(attr)] = node.get(attr)
+            children = list(node)
+            for child in children:
+                result[self._get_key(child.tag)] = self._from_xml_node(
+                    child, listnames)
             return result
-
-    def find_first_child_named(self, parent, name):
-        """Search a nodes children for the first child with a given name"""
-        for node in parent.childNodes:
-            if node.nodeName == name:
-                return node
-        return None
-
-    def find_children_named(self, parent, name):
-        """Return all of a nodes children who have the given name"""
-        for node in parent.childNodes:
-            if node.nodeName == name:
-                yield node
-
-    def extract_text(self, node):
-        """Get the text field contained by the given node"""
-        if len(node.childNodes) == 1:
-            child = node.childNodes[0]
-            if child.nodeType == child.TEXT_NODE:
-                return child.nodeValue
-        return ""
 
     def default(self, datastring):
         return {'body': self._from_xml(datastring)}
@@ -487,7 +705,7 @@ class XMLDeserializer(TextDeserializer):
 
 
 class RequestHeadersDeserializer(ActionDispatcher):
-    """Default request headers deserializer"""
+    """Default request headers deserializer."""
 
     def deserialize(self, request, action):
         return self.dispatch(request, action=action)
@@ -649,7 +867,8 @@ class Application(object):
 
 
 class Debug(Middleware):
-    """
+    """Middleware for debugging.
+
     Helper class that can be inserted into any WSGI application chain
     to get information about the request and response.
     """
@@ -673,10 +892,7 @@ class Debug(Middleware):
 
     @staticmethod
     def print_generator(app_iter):
-        """
-        Iterator that prints the contents of a wrapper string iterator
-        when iterated.
-        """
+        """Print contents of a wrapper string iterator when iterated."""
         print ("*" * 40) + " BODY"
         for part in app_iter:
             sys.stdout.write(part)
@@ -686,20 +902,15 @@ class Debug(Middleware):
 
 
 class Router(object):
-    """
-    WSGI middleware that maps incoming requests to WSGI apps.
-    """
+    """WSGI middleware that maps incoming requests to WSGI apps."""
 
     @classmethod
     def factory(cls, global_config, **local_config):
-        """
-        Returns an instance of the WSGI Router class
-        """
+        """Return an instance of the WSGI Router class."""
         return cls()
 
     def __init__(self, mapper):
-        """
-        Create a router for the given routes.Mapper.
+        """Create a router for the given routes.Mapper.
 
         Each route in `mapper` must specify a 'controller', which is a
         WSGI app to call.  You'll probably want to specify an 'action' as
@@ -727,8 +938,8 @@ class Router(object):
 
     @webob.dec.wsgify
     def __call__(self, req):
-        """
-        Route the incoming request to a controller based on self.map.
+        """Route the incoming request to a controller based on self.map.
+
         If no match, return a 404.
         """
         return self._router
@@ -736,9 +947,10 @@ class Router(object):
     @staticmethod
     @webob.dec.wsgify
     def _dispatch(req):
-        """
+        """Dispatch a Request.
+
         Called by self._router after matching the incoming request to a route
-        and putting the information into req.environ.  Either returns 404
+        and putting the information into req.environ. Either returns 404
         or the routed WSGI app's response.
         """
         match = req.environ['wsgiorg.routing_args'][1]
@@ -763,7 +975,8 @@ class Resource(Application):
 
     def __init__(self, controller, fault_body_function,
                  deserializer=None, serializer=None):
-        """
+        """Object initialization.
+
         :param controller: object that implement methods created by routes lib
         :param deserializer: object that can serialize the output of a
                              controller into a webob response
@@ -827,7 +1040,7 @@ class Resource(Application):
         try:
             msg_dict = dict(url=request.url, status=response.status_int)
             msg = _("%(url)s returned with HTTP %(status)d") % msg_dict
-        except AttributeError, e:
+        except AttributeError as e:
             msg_dict = dict(url=request.url, exception=e)
             msg = _("%(url)s returned a fault: %(exception)s") % msg_dict
 
@@ -861,7 +1074,7 @@ def _default_body_function(wrapped_exc):
 
 
 class Fault(webob.exc.HTTPException):
-    """ Generates an HTTP response from a webob HTTP exception"""
+    """Generates an HTTP response from a webob HTTP exception."""
 
     def __init__(self, exception, xmlns=None, body_function=None):
         """Creates a Fault for the given webob.exc.exception."""
@@ -902,9 +1115,7 @@ class Controller(object):
 
     @webob.dec.wsgify(RequestClass=Request)
     def __call__(self, req):
-        """
-        Call the method specified in req.environ by RoutesMiddleware.
-        """
+        """Call the method specified in req.environ by RoutesMiddleware."""
         arg_dict = req.environ['wsgiorg.routing_args'][1]
         action = arg_dict['action']
         method = getattr(self, action)
@@ -960,7 +1171,7 @@ class Controller(object):
         """
         _metadata = getattr(type(self), '_serialization_metadata', {})
         serializer = Serializer(_metadata)
-        return serializer.deserialize(data, content_type)
+        return serializer.deserialize(data, content_type)['body']
 
     def get_default_xmlns(self, req):
         """Provide the XML namespace to use if none is otherwise specified."""
@@ -984,8 +1195,8 @@ class Serializer(object):
 
     def _get_serialize_handler(self, content_type):
         handlers = {
-            'application/json': self._to_json,
-            'application/xml': self._to_xml,
+            'application/json': JSONDictSerializer(),
+            'application/xml': XMLDictSerializer(self.metadata),
         }
 
         try:
@@ -995,7 +1206,7 @@ class Serializer(object):
 
     def serialize(self, data, content_type):
         """Serialize a dictionary into the specified content type."""
-        return self._get_serialize_handler(content_type)(data)
+        return self._get_serialize_handler(content_type).serialize(data)
 
     def deserialize(self, datastring, content_type):
         """Deserialize a string to a dictionary.
@@ -1004,115 +1215,18 @@ class Serializer(object):
 
         """
         try:
-            return self.get_deserialize_handler(content_type)(datastring)
+            return self.get_deserialize_handler(content_type).deserialize(
+                datastring)
         except Exception:
             raise webob.exc.HTTPBadRequest(_("Could not deserialize data"))
 
     def get_deserialize_handler(self, content_type):
         handlers = {
-            'application/json': self._from_json,
-            'application/xml': self._from_xml,
+            'application/json': JSONDeserializer(),
+            'application/xml': XMLDeserializer(self.metadata),
         }
 
         try:
             return handlers[content_type]
         except Exception:
             raise exception.InvalidContentType(content_type=content_type)
-
-    def _from_json(self, datastring):
-        return jsonutils.loads(datastring)
-
-    def _from_xml(self, datastring):
-        xmldata = self.metadata.get('application/xml', {})
-        plurals = set(xmldata.get('plurals', {}))
-        node = minidom.parseString(datastring).childNodes[0]
-        return {node.nodeName: self._from_xml_node(node, plurals)}
-
-    def _from_xml_node(self, node, listnames):
-        """Convert a minidom node to a simple Python type.
-
-        listnames is a collection of names of XML nodes whose subnodes should
-        be considered list items.
-
-        """
-        if len(node.childNodes) == 1 and node.childNodes[0].nodeType == 3:
-            return node.childNodes[0].nodeValue
-        elif node.nodeName in listnames:
-            return [self._from_xml_node(n, listnames)
-                    for n in node.childNodes if n.nodeType != node.TEXT_NODE]
-        else:
-            result = dict()
-            for attr in node.attributes.keys():
-                result[attr] = node.attributes[attr].nodeValue
-            for child in node.childNodes:
-                if child.nodeType != node.TEXT_NODE:
-                    result[child.nodeName] = self._from_xml_node(child,
-                                                                 listnames)
-            return result
-
-    def _to_json(self, data):
-        return jsonutils.dumps(data)
-
-    def _to_xml(self, data):
-        metadata = self.metadata.get('application/xml', {})
-        # We expect data to contain a single key which is the XML root.
-        root_key = data.keys()[0]
-        doc = minidom.Document()
-        node = self._to_xml_node(doc, metadata, root_key, data[root_key])
-
-        xmlns = node.getAttribute('xmlns')
-        if not xmlns and self.default_xmlns:
-            node.setAttribute('xmlns', self.default_xmlns)
-
-        return node.toprettyxml(indent='', newl='')
-
-    def _to_xml_node(self, doc, metadata, nodename, data):
-        """Recursive method to convert data members to XML nodes."""
-        result = doc.createElement(nodename)
-
-        # Set the xml namespace if one is specified
-        # TODO(justinsb): We could also use prefixes on the keys
-        xmlns = metadata.get('xmlns', None)
-        if xmlns:
-            result.setAttribute('xmlns', xmlns)
-        if isinstance(data, list):
-            collections = metadata.get('list_collections', {})
-            if nodename in collections:
-                metadata = collections[nodename]
-                for item in data:
-                    node = doc.createElement(metadata['item_name'])
-                    node.setAttribute(metadata['item_key'], str(item))
-                    result.appendChild(node)
-                return result
-            singular = metadata.get('plurals', {}).get(nodename, None)
-            if singular is None:
-                if nodename.endswith('s'):
-                    singular = nodename[:-1]
-                else:
-                    singular = 'item'
-            for item in data:
-                node = self._to_xml_node(doc, metadata, singular, item)
-                result.appendChild(node)
-        elif isinstance(data, dict):
-            collections = metadata.get('dict_collections', {})
-            if nodename in collections:
-                metadata = collections[nodename]
-                for k, v in data.items():
-                    node = doc.createElement(metadata['item_name'])
-                    node.setAttribute(metadata['item_key'], str(k))
-                    text = doc.createTextNode(str(v))
-                    node.appendChild(text)
-                    result.appendChild(node)
-                return result
-            attrs = metadata.get('attributes', {}).get(nodename, {})
-            for k, v in data.items():
-                if k in attrs:
-                    result.setAttribute(k, str(v))
-                else:
-                    node = self._to_xml_node(doc, metadata, k, v)
-                    result.appendChild(node)
-        else:
-            # Type is atom.
-            node = doc.createTextNode(str(data))
-            result.appendChild(node)
-        return result

@@ -17,10 +17,13 @@
 
 import mock
 from mock import call
-import unittest2 as unittest
+from oslo.config import cfg
 
+from quantum.agent.common import config as a_cfg
 from quantum.agent.linux.iptables_firewall import IptablesFirewallDriver
+from quantum.tests import base
 from quantum.tests.unit import test_api_v2
+
 
 _uuid = test_api_v2._uuid
 FAKE_PREFIX = {'IPv4': '10.0.0.0/24',
@@ -29,14 +32,18 @@ FAKE_IP = {'IPv4': '10.0.0.1',
            'IPv6': 'fe80::1'}
 
 
-class IptablesFirewallTestCase(unittest.TestCase):
+class IptablesFirewallTestCase(base.BaseTestCase):
     def setUp(self):
+        super(IptablesFirewallTestCase, self).setUp()
+        cfg.CONF.register_opts(a_cfg.ROOT_HELPER_OPTS, 'AGENT')
         self.utils_exec_p = mock.patch(
             'quantum.agent.linux.utils.execute')
         self.utils_exec = self.utils_exec_p.start()
+        self.addCleanup(self.utils_exec_p.stop)
         self.iptables_cls_p = mock.patch(
             'quantum.agent.linux.iptables_manager.IptablesManager')
         iptables_cls = self.iptables_cls_p.start()
+        self.addCleanup(self.iptables_cls_p.stop)
         self.iptables_inst = mock.Mock()
         self.v4filter_inst = mock.Mock()
         self.v6filter_inst = mock.Mock()
@@ -44,11 +51,8 @@ class IptablesFirewallTestCase(unittest.TestCase):
         self.iptables_inst.ipv6 = {'filter': self.v6filter_inst}
         iptables_cls.return_value = self.iptables_inst
 
-        self.firewall = IptablesFirewallDriver(self.iptables_inst)
-
-    def tearDown(self):
-        self.iptables_cls_p.stop()
-        self.utils_exec_p.stop()
+        self.firewall = IptablesFirewallDriver()
+        self.firewall.iptables = self.iptables_inst
 
     def _fake_port(self):
         return {'device': 'tapfake_dev',
@@ -906,7 +910,7 @@ class IptablesFirewallTestCase(unittest.TestCase):
         try:
             with self.firewall.defer_apply():
                 raise Exception("same exception")
-        except:
+        except Exception:
             pass
         self.iptables_inst.assert_has_calls([call.defer_apply_on(),
                                              call.defer_apply_off()])

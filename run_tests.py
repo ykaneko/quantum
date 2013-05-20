@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010 OpenStack, LLC
+# Copyright 2010 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,15 +41,13 @@ To run a single functional test module::
     python run_tests.py functional.test_stores
 """
 
-import gettext
 import os
-import unittest
 import sys
 
-from quantum.common.test_lib import run_tests
 from nose import config
 from nose import core
 
+from quantum.common.test_lib import run_tests
 import quantum.tests.unit
 
 

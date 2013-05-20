@@ -19,10 +19,12 @@
 import socket
 
 import mock
-import unittest2 as unittest
+import testtools
 import webob
 
 from quantum.agent.metadata import namespace_proxy as ns_proxy
+from quantum.common import utils
+from quantum.tests import base
 
 
 class FakeConf(object):
@@ -37,7 +39,7 @@ class FakeConf(object):
     metadata_proxy_shared_secret = 'secret'
 
 
-class TestUnixDomainHttpConnection(unittest.TestCase):
+class TestUnixDomainHttpConnection(base.BaseTestCase):
     def test_connect(self):
         with mock.patch.object(ns_proxy, 'cfg') as cfg:
             cfg.CONF.metadata_proxy_socket = '/the/path'
@@ -55,15 +57,14 @@ class TestUnixDomainHttpConnection(unittest.TestCase):
                 self.assertEqual(conn.timeout, 3)
 
 
-class TestNetworkMetadataProxyHandler(unittest.TestCase):
+class TestNetworkMetadataProxyHandler(base.BaseTestCase):
     def setUp(self):
+        super(TestNetworkMetadataProxyHandler, self).setUp()
         self.log_p = mock.patch.object(ns_proxy, 'LOG')
         self.log = self.log_p.start()
+        self.addCleanup(self.log_p.stop)
 
         self.handler = ns_proxy.NetworkMetadataProxyHandler('router_id')
-
-    def tearDown(self):
-        self.log_p.stop()
 
     def test_call(self):
         req = mock.Mock(headers={})
@@ -73,11 +74,13 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
             retval = self.handler(req)
             self.assertEqual(retval, 'value')
             proxy_req.assert_called_once_with(req.remote_addr,
+                                              req.method,
                                               req.path_info,
-                                              req.query_string)
+                                              req.query_string,
+                                              req.body)
 
     def test_no_argument_passed_to_init(self):
-        with self.assertRaises(ValueError):
+        with testtools.ExpectedException(ValueError):
             ns_proxy.NetworkMetadataProxyHandler()
 
     def test_call_internal_server_error(self):
@@ -97,17 +100,21 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
             mock_http.return_value.request.return_value = (resp, 'content')
 
             retval = self.handler._proxy_request('192.168.1.1',
+                                                 'GET',
                                                  '/latest/meta-data',
+                                                 '',
                                                  '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Router-ID': 'router_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
@@ -121,17 +128,21 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
             mock_http.return_value.request.return_value = (resp, 'content')
 
             retval = self.handler._proxy_request('192.168.1.1',
+                                                 'GET',
                                                  '/latest/meta-data',
+                                                 '',
                                                  '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Network-ID': 'network_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
@@ -145,21 +156,53 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
             mock_http.return_value.request.return_value = (resp, '')
 
             retval = self.handler._proxy_request('192.168.1.1',
+                                                 'GET',
                                                  '/latest/meta-data',
+                                                 '',
                                                  '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Network-ID': 'network_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
             self.assertIsInstance(retval, webob.exc.HTTPNotFound)
+
+    def test_proxy_request_network_409(self):
+        self.handler.network_id = 'network_id'
+
+        resp = mock.Mock(status=409)
+        with mock.patch('httplib2.Http') as mock_http:
+            mock_http.return_value.request.return_value = (resp, '')
+
+            retval = self.handler._proxy_request('192.168.1.1',
+                                                 'POST',
+                                                 '/latest/meta-data',
+                                                 '',
+                                                 '')
+
+            mock_http.assert_has_calls([
+                mock.call().request(
+                    'http://169.254.169.254/latest/meta-data',
+                    method='POST',
+                    headers={
+                        'X-Forwarded-For': '192.168.1.1',
+                        'X-Quantum-Network-ID': 'network_id'
+                    },
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
+                )]
+            )
+
+            self.assertIsInstance(retval, webob.exc.HTTPConflict)
 
     def test_proxy_request_network_500(self):
         self.handler.network_id = 'network_id'
@@ -169,17 +212,21 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
             mock_http.return_value.request.return_value = (resp, '')
 
             retval = self.handler._proxy_request('192.168.1.1',
+                                                 'GET',
                                                  '/latest/meta-data',
+                                                 '',
                                                  '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Network-ID': 'network_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
@@ -192,55 +239,63 @@ class TestNetworkMetadataProxyHandler(unittest.TestCase):
         with mock.patch('httplib2.Http') as mock_http:
             mock_http.return_value.request.return_value = (resp, '')
 
-            with self.assertRaises(Exception):
+            with testtools.ExpectedException(Exception):
                 self.handler._proxy_request('192.168.1.1',
+                                            'GET',
                                             '/latest/meta-data',
+                                            '',
                                             '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Network-ID': 'network_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
     def test_proxy_request_network_exception(self):
         self.handler.network_id = 'network_id'
 
-        resp = mock.Mock(status=500)
+        mock.Mock(status=500)
         with mock.patch('httplib2.Http') as mock_http:
             mock_http.return_value.request.side_effect = Exception
 
-            with self.assertRaises(Exception):
+            with testtools.ExpectedException(Exception):
                 self.handler._proxy_request('192.168.1.1',
+                                            'GET',
                                             '/latest/meta-data',
+                                            '',
                                             '')
 
             mock_http.assert_has_calls([
                 mock.call().request(
                     'http://169.254.169.254/latest/meta-data',
+                    method='GET',
                     headers={
                         'X-Forwarded-For': '192.168.1.1',
                         'X-Quantum-Network-ID': 'network_id'
                     },
-                    connection_type=ns_proxy.UnixDomainHTTPConnection
+                    connection_type=ns_proxy.UnixDomainHTTPConnection,
+                    body=''
                 )]
             )
 
 
-class TestProxyDaemon(unittest.TestCase):
+class TestProxyDaemon(base.BaseTestCase):
     def test_init(self):
-        with mock.patch('quantum.agent.linux.daemon.Pidfile') as pf:
+        with mock.patch('quantum.agent.linux.daemon.Pidfile'):
             pd = ns_proxy.ProxyDaemon('pidfile', 9697, 'net_id', 'router_id')
             self.assertEqual(pd.router_id, 'router_id')
             self.assertEqual(pd.network_id, 'net_id')
 
     def test_run(self):
-        with mock.patch('quantum.agent.linux.daemon.Pidfile') as pf:
+        with mock.patch('quantum.agent.linux.daemon.Pidfile'):
             with mock.patch('quantum.wsgi.Server') as Server:
                 pd = ns_proxy.ProxyDaemon('pidfile', 9697, 'net_id',
                                           'router_id')
@@ -256,37 +311,43 @@ class TestProxyDaemon(unittest.TestCase):
             with mock.patch('eventlet.monkey_patch') as eventlet:
                 with mock.patch.object(ns_proxy, 'config') as config:
                     with mock.patch.object(ns_proxy, 'cfg') as cfg:
-                        cfg.CONF.router_id = 'router_id'
-                        cfg.CONF.network_id = None
-                        cfg.CONF.metadata_port = 9697
-                        cfg.CONF.pid_file = 'pidfile'
-                        cfg.CONF.daemonize = True
-                        ns_proxy.main()
+                        with mock.patch.object(utils, 'cfg') as utils_cfg:
+                            cfg.CONF.router_id = 'router_id'
+                            cfg.CONF.network_id = None
+                            cfg.CONF.metadata_port = 9697
+                            cfg.CONF.pid_file = 'pidfile'
+                            cfg.CONF.daemonize = True
+                            utils_cfg.CONF.log_opt_values.return_value = None
+                            ns_proxy.main()
 
-                        self.assertTrue(eventlet.called)
-                        self.assertTrue(config.setup_logging.called)
-                        daemon.assert_has_calls([
-                            mock.call('pidfile', 9697, router_id='router_id',
-                                      network_id=None),
-                            mock.call().start()]
-                        )
+                            self.assertTrue(eventlet.called)
+                            self.assertTrue(config.setup_logging.called)
+                            daemon.assert_has_calls([
+                                mock.call('pidfile', 9697,
+                                          router_id='router_id',
+                                          network_id=None),
+                                mock.call().start()]
+                            )
 
     def test_main_dont_fork(self):
         with mock.patch.object(ns_proxy, 'ProxyDaemon') as daemon:
             with mock.patch('eventlet.monkey_patch') as eventlet:
                 with mock.patch.object(ns_proxy, 'config') as config:
                     with mock.patch.object(ns_proxy, 'cfg') as cfg:
-                        cfg.CONF.router_id = 'router_id'
-                        cfg.CONF.network_id = None
-                        cfg.CONF.metadata_port = 9697
-                        cfg.CONF.pid_file = 'pidfile'
-                        cfg.CONF.daemonize = False
-                        ns_proxy.main()
+                        with mock.patch.object(utils, 'cfg') as utils_cfg:
+                            cfg.CONF.router_id = 'router_id'
+                            cfg.CONF.network_id = None
+                            cfg.CONF.metadata_port = 9697
+                            cfg.CONF.pid_file = 'pidfile'
+                            cfg.CONF.daemonize = False
+                            utils_cfg.CONF.log_opt_values.return_value = None
+                            ns_proxy.main()
 
-                        self.assertTrue(eventlet.called)
-                        self.assertTrue(config.setup_logging.called)
-                        daemon.assert_has_calls([
-                            mock.call('pidfile', 9697, router_id='router_id',
-                                      network_id=None),
-                            mock.call().run()]
-                        )
+                            self.assertTrue(eventlet.called)
+                            self.assertTrue(config.setup_logging.called)
+                            daemon.assert_has_calls([
+                                mock.call('pidfile', 9697,
+                                          router_id='router_id',
+                                          network_id=None),
+                                mock.call().run()]
+                            )

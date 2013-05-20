@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2013 OpenStack, LLC
+# Copyright 2013 OpenStack Foundation
 # Copyright 2013 IBM Corp.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -21,11 +21,10 @@ virtual environments.
 Synced in from openstack-common
 """
 
+import argparse
 import os
 import subprocess
 import sys
-
-from quantum.openstack.common import cfg
 
 
 class InstallVenv(object):
@@ -51,7 +50,7 @@ class InstallVenv(object):
                               check_exit_code=True):
         """Runs a command in an out-of-process shell.
 
-        Returns the output of that command. Working directory is ROOT.
+        Returns the output of that command. Working directory is self.root.
         """
         if redirect_output:
             stdout = subprocess.PIPE
@@ -94,7 +93,7 @@ class InstallVenv(object):
             else:
                 self.run_command(['virtualenv', '-q', self.venv])
             print 'done.'
-            print 'Installing pip in virtualenv...',
+            print 'Installing pip in venv...',
             if not self.run_command(['tools/with_venv.sh', 'easy_install',
                                     'pip>1.0']).strip():
                 self.die("Failed to install pip.")
@@ -132,17 +131,12 @@ class InstallVenv(object):
 
     def parse_args(self, argv):
         """Parses command-line arguments."""
-        cli_opts = [
-            cfg.BoolOpt('no-site-packages',
-                        default=False,
-                        short='n',
-                        help="Do not inherit packages from global Python"
-                             "install"),
-        ]
-        CLI = cfg.ConfigOpts()
-        CLI.register_cli_opts(cli_opts)
-        CLI(argv[1:])
-        return CLI
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-n', '--no-site-packages',
+                            action='store_true',
+                            help="Do not inherit packages from global Python "
+                                 "install")
+        return parser.parse_args(argv[1:])
 
 
 class Distro(InstallVenv):
@@ -191,7 +185,8 @@ class Fedora(Distro):
         self.run_command(['sudo', 'yum', 'install', '-y', pkg], **kwargs)
 
     def apply_patch(self, originalfile, patchfile):
-        self.run_command(['patch', originalfile, patchfile])
+        self.run_command(['patch', '-N', originalfile, patchfile],
+                         check_exit_code=False)
 
     def install_virtualenv(self):
         if self.check_cmd('virtualenv'):

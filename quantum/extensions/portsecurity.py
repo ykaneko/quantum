@@ -31,7 +31,7 @@ class PortSecurityAndIPRequiredForSecurityGroups(qexception.InvalidInput):
                 " address in order to use security groups.")
 
 
-class PortSecurityBindingNotFound(qexception.InvalidExtenstionEnv):
+class PortSecurityBindingNotFound(qexception.InvalidExtensionEnv):
     message = _("Port does not have port security binding.")
 
 PORTSECURITY = 'port_security_enabled'
@@ -39,6 +39,7 @@ EXTENDED_ATTRIBUTES_2_0 = {
     'networks': {
         PORTSECURITY: {'allow_post': True, 'allow_put': True,
                        'convert_to': attributes.convert_to_boolean,
+                       'enforce_policy': True,
                        'default': True,
                        'is_visible': True},
     },
@@ -46,14 +47,14 @@ EXTENDED_ATTRIBUTES_2_0 = {
         PORTSECURITY: {'allow_post': True, 'allow_put': True,
                        'convert_to': attributes.convert_to_boolean,
                        'default': attributes.ATTR_NOT_SPECIFIED,
+                       'enforce_policy': True,
                        'is_visible': True},
     }
 }
 
 
 class Portsecurity(object):
-    """Extension class supporting port security
-    """
+    """Extension class supporting port security."""
 
     @classmethod
     def get_name(cls):

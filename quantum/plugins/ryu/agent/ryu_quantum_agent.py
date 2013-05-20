@@ -23,32 +23,36 @@
 import httplib
 import socket
 import sys
+import time
 
+import eventlet
 import netifaces
+from oslo.config import cfg
 from ryu.app import client
 from ryu.app import conf_switch_key
 from ryu.app import rest_nw_id
-from sqlalchemy.ext.sqlsoup import SqlSoup
 
 from quantum.agent.linux import ovs_lib
 from quantum.agent.linux.ovs_lib import VifPort
+from quantum.agent import rpc as agent_rpc
+from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum.common import config as logging_config
-from quantum.openstack.common import cfg
-from quantum.openstack.common.cfg import NoSuchGroupError
-from quantum.openstack.common.cfg import NoSuchOptError
+from quantum.common import exceptions as q_exc
+from quantum.common import topics
+from quantum import context as q_context
+from quantum.extensions import securitygroup as ext_sg
 from quantum.openstack.common import log
-from quantum.plugins.ryu.common import config
+from quantum.openstack.common.rpc import dispatcher
+from quantum.plugins.ryu.common import config  # noqa
 
 
-cfg.CONF.import_opt('sql_connection', 'quantum.db.api', 'DATABASE')
 LOG = log.getLogger(__name__)
 
 
 # This is copied of nova.flags._get_my_ip()
 # Agent shouldn't depend on nova module
 def _get_my_ip():
-    """
-    Returns the actual ip of the local machine.
+    """Return the actual ip of the local machine.
 
     This code figures out what source address would be used if some traffic
     were to be sent out to some well known address on the Internet. In this
@@ -66,7 +70,7 @@ def _get_ip(cfg_ip_str, cfg_interface_str):
     ip = None
     try:
         ip = getattr(cfg.CONF.OVS, cfg_ip_str)
-    except (NoSuchOptError, NoSuchGroupError):
+    except (cfg.NoSuchOptError, cfg.NoSuchGroupError):
         pass
     if ip:
         return ip
@@ -74,7 +78,7 @@ def _get_ip(cfg_ip_str, cfg_interface_str):
     iface = None
     try:
         iface = getattr(cfg.CONF.OVS, cfg_interface_str)
-    except (NoSuchOptError, NoSuchGroupError):
+    except (cfg.NoSuchOptError, cfg.NoSuchGroupError):
         pass
     if iface:
         iface = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
@@ -148,29 +152,68 @@ class VifPortSet(object):
                                  port.switch.datapath_id, port.ofport)
 
 
-class OVSQuantumOFPRyuAgent(object):
-    def __init__(self, integ_br, ofp_rest_api_addr,
-                 tunnel_ip, ovsdb_ip, ovsdb_port,
-                 root_helper):
+class RyuPluginApi(agent_rpc.PluginApi,
+                   sg_rpc.SecurityGroupServerRpcApiMixin):
+    def get_ofp_rest_api_addr(self, context):
+        LOG.debug(_("Get Ryu rest API address"))
+        return self.call(context,
+                         self.make_msg('get_ofp_rest_api'),
+                         topic=self.topic)
+
+
+class RyuSecurityGroupAgent(sg_rpc.SecurityGroupAgentRpcMixin):
+    def __init__(self, context, plugin_rpc, root_helper):
+        self.context = context
+        self.plugin_rpc = plugin_rpc
+        self.root_helper = root_helper
+        self.init_firewall()
+
+
+class OVSQuantumOFPRyuAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
+
+    RPC_API_VERSION = '1.1'
+
+    def __init__(self, integ_br, tunnel_ip, ovsdb_ip, ovsdb_port,
+                 polling_interval, root_helper):
         super(OVSQuantumOFPRyuAgent, self).__init__()
-        self.int_br = None
-        self.vif_ports = None
-        self._setup_integration_br(root_helper, integ_br,
-                                   ofp_rest_api_addr,
-                                   tunnel_ip, ovsdb_port, ovsdb_ip)
+        self.polling_interval = polling_interval
+        self._setup_rpc()
+        self.sg_agent = RyuSecurityGroupAgent(self.context,
+                                              self.plugin_rpc,
+                                              root_helper)
+        self._setup_integration_br(root_helper, integ_br, tunnel_ip,
+                                   ovsdb_port, ovsdb_ip)
+
+    def _setup_rpc(self):
+        self.topic = topics.AGENT
+        self.plugin_rpc = RyuPluginApi(topics.PLUGIN)
+        self.context = q_context.get_admin_context_without_session()
+        self.dispatcher = self._create_rpc_dispatcher()
+        consumers = [[topics.PORT, topics.UPDATE],
+                     [topics.SECURITY_GROUP, topics.UPDATE]]
+        self.connection = agent_rpc.create_consumers(self.dispatcher,
+                                                     self.topic,
+                                                     consumers)
+
+    def _create_rpc_dispatcher(self):
+        return dispatcher.RpcDispatcher([self])
 
     def _setup_integration_br(self, root_helper, integ_br,
-                              ofp_rest_api_addr,
                               tunnel_ip, ovsdb_port, ovsdb_ip):
         self.int_br = OVSBridge(integ_br, root_helper)
         self.int_br.find_datapath_id()
 
-        ryu_rest_client = client.OFPClient(ofp_rest_api_addr)
+        rest_api_addr = self.plugin_rpc.get_ofp_rest_api_addr(self.context)
+        if not rest_api_addr:
+            raise q_exc.Invalid(_("Ryu rest API port isn't specified"))
+        LOG.debug(_("Going to ofp controller mode %s"), rest_api_addr)
+
+        ryu_rest_client = client.OFPClient(rest_api_addr)
 
         self.vif_ports = VifPortSet(self.int_br, ryu_rest_client)
         self.vif_ports.setup()
 
-        sc_client = client.SwitchConfClient(ofp_rest_api_addr)
+        sc_client = client.SwitchConfClient(rest_api_addr)
         sc_client.set_key(self.int_br.datapath_id,
                           conf_switch_key.OVS_TUNNEL_ADDR, tunnel_ip)
 
@@ -179,46 +222,65 @@ class OVSQuantumOFPRyuAgent(object):
         sc_client.set_key(self.int_br.datapath_id, conf_switch_key.OVSDB_ADDR,
                           'tcp:%s:%d' % (ovsdb_ip, ovsdb_port))
 
+    def port_update(self, context, **kwargs):
+        LOG.debug(_("port update received"))
+        port = kwargs.get('port')
+        vif_port = self.int_br.get_vif_port_by_id(port['id'])
+        if not vif_port:
+            return
 
-def check_ofp_rest_api_addr(db):
-    LOG.debug(_("Checking db"))
+        if ext_sg.SECURITYGROUPS in port:
+            self.sg_agent.refresh_firewall()
 
-    servers = db.ofp_server.all()
+    def _update_ports(self, registered_ports):
+        ports = self.int_br.get_vif_port_set()
+        if ports == registered_ports:
+            return
+        added = ports - registered_ports
+        removed = registered_ports - ports
+        return {'current': ports,
+                'added': added,
+                'removed': removed}
 
-    ofp_controller_addr = None
-    ofp_rest_api_addr = None
-    for serv in servers:
-        if serv.host_type == "REST_API":
-            ofp_rest_api_addr = serv.address
-        elif serv.host_type == "controller":
-            ofp_controller_addr = serv.address
-        else:
-            LOG.warn(_("Ignoring unknown server type %s"), serv)
+    def _process_devices_filter(self, port_info):
+        if 'added' in port_info:
+            self.sg_agent.prepare_devices_filter(port_info['added'])
+        if 'removed' in port_info:
+            self.sg_agent.remove_devices_filter(port_info['removed'])
 
-    LOG.debug(_("API %s"), ofp_rest_api_addr)
-    if ofp_controller_addr:
-        LOG.warn(_('OF controller parameter is stale %s'), ofp_controller_addr)
-    if not ofp_rest_api_addr:
-        raise RuntimeError(_("Ryu rest API port isn't specified"))
+    def daemon_loop(self):
+        ports = set()
 
-    LOG.debug(_("Going to ofp controller mode %s"), ofp_rest_api_addr)
-    return ofp_rest_api_addr
+        while True:
+            start = time.time()
+            try:
+                port_info = self._update_ports(ports)
+                if port_info:
+                    LOG.debug(_("Agent loop has new device"))
+                    self._process_devices_filter(port_info)
+                    ports = port_info['current']
+            except Exception:
+                LOG.exception(_("Error in agent event loop"))
+
+            elapsed = max(time.time() - start, 0)
+            if (elapsed < self.polling_interval):
+                time.sleep(self.polling_interval - elapsed)
+            else:
+                LOG.debug(_("Loop iteration exceeded interval "
+                            "(%(polling_interval)s vs. %(elapsed)s)!"),
+                          {'polling_interval': self.polling_interval,
+                           'elapsed': elapsed})
 
 
 def main():
+    eventlet.monkey_patch()
     cfg.CONF(project='quantum')
 
     logging_config.setup_logging(cfg.CONF)
 
     integ_br = cfg.CONF.OVS.integration_bridge
+    polling_interval = cfg.CONF.AGENT.polling_interval
     root_helper = cfg.CONF.AGENT.root_helper
-    options = {"sql_connection": cfg.CONF.DATABASE.sql_connection}
-    db = SqlSoup(options["sql_connection"])
-
-    LOG.info(_("Connecting to database \"%(database)s\" on %(host)s"),
-             {"database": db.engine.url.database,
-              "host": db.engine.url.host})
-    ofp_rest_api_addr = check_ofp_rest_api_addr(db)
 
     tunnel_ip = _get_tunnel_ip()
     LOG.debug(_('tunnel_ip %s'), tunnel_ip)
@@ -227,14 +289,16 @@ def main():
     ovsdb_ip = _get_ovsdb_ip()
     LOG.debug(_('ovsdb_ip %s'), ovsdb_ip)
     try:
-        OVSQuantumOFPRyuAgent(integ_br, ofp_rest_api_addr,
-                              tunnel_ip, ovsdb_ip, ovsdb_port, root_helper)
-    except httplib.HTTPException, e:
+        agent = OVSQuantumOFPRyuAgent(integ_br, tunnel_ip, ovsdb_ip,
+                                      ovsdb_port, polling_interval,
+                                      root_helper)
+    except httplib.HTTPException as e:
         LOG.error(_("Initialization failed: %s"), e)
         sys.exit(1)
 
-    LOG.info(_("Ryu initialization on the node is done."
-               " Now Ryu agent exits successfully."))
+    LOG.info(_("Ryu initialization on the node is done. "
+               "Agent initialized successfully, now running..."))
+    agent.daemon_loop()
     sys.exit(0)
 
 

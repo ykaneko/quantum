@@ -20,7 +20,7 @@ import contextlib
 
 
 class FirewallDriver(object):
-    """ Firewall Driver base class.
+    """Firewall Driver base class.
 
     Defines methods that any driver providing security groups
     and provider firewall functionality should implement.
@@ -37,17 +37,19 @@ class FirewallDriver(object):
       the rule may contain security_group_id,
           protocol, port_min, port_max
           source_ip_prefix, source_port_min,
-          source_port_max, dest_ip_prefix,
+          source_port_max, dest_ip_prefix, and
+          remote_group_id
       Note: source_group_ip in REST API should be converted by this rule
       if direction is ingress:
-        source_group_ip will be a soruce_prefix_ip
+        remote_group_ip will be a source_ip_prefix
       if direction is egress:
-        source_group_ip will be a dest_prefix_ip
-      Note: source_group_id in REST API should be converted by this rule
+        remote_group_ip will be a dest_ip_prefix
+      Note: remote_group_id in REST API should be converted by this rule
       if direction is ingress:
-        source_group_id will be a list of soruce_prefix_ip
+        remote_group_id will be a list of source_ip_prefix
       if direction is egress:
-        source_group_id will be a list of dest_prefix_ip
+        remote_group_id will be a list of dest_ip_prefix
+      remote_group_id will also remaining membership update management
     """
 
     __metaclass__ = abc.ABCMeta
@@ -79,27 +81,57 @@ class FirewallDriver(object):
         raise NotImplementedError()
 
     def remove_port_filter(self, port):
-        """Stop filtering port"""
+        """Stop filtering port."""
         raise NotImplementedError()
 
     def filter_defer_apply_on(self):
-        """Defer application of filtering rule"""
+        """Defer application of filtering rule."""
         pass
 
     def filter_defer_apply_off(self):
-        """Turn off deferral of rules and apply the rules now"""
+        """Turn off deferral of rules and apply the rules now."""
         pass
 
     @property
     def ports(self):
-        """ returns filterd ports"""
+        """Returns filtered ports."""
         pass
 
     @contextlib.contextmanager
     def defer_apply(self):
-        """defer apply context"""
+        """Defer apply context."""
         self.filter_defer_apply_on()
         try:
             yield
         finally:
             self.filter_defer_apply_off()
+
+
+class NoopFirewallDriver(FirewallDriver):
+    """Noop Firewall Driver.
+
+    Firewall driver which does nothing.
+    This driver is for disabling the firewall functionality.
+    """
+
+    def prepare_port_filter(self, port):
+        pass
+
+    def apply_port_filter(self, port):
+        pass
+
+    def update_port_filter(self, port):
+        pass
+
+    def remove_port_filter(self, port):
+        pass
+
+    def filter_defer_apply_on(self):
+        pass
+
+    def filter_defer_apply_off(self):
+        pass
+
+    @property
+    def ports(self):
+        return {}

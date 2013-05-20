@@ -16,8 +16,10 @@
 #    under the License.
 
 import netaddr
+from oslo.config import cfg
 
 from quantum.agent import firewall
+from quantum.agent.linux import iptables_manager
 from quantum.common import constants
 from quantum.openstack.common import log as logging
 
@@ -28,16 +30,18 @@ INGRESS_DIRECTION = 'ingress'
 EGRESS_DIRECTION = 'egress'
 CHAIN_NAME_PREFIX = {INGRESS_DIRECTION: 'i',
                      EGRESS_DIRECTION: 'o'}
-IPTABLES_DIRECTION = {INGRESS_DIRECTION: 'physdev-out',
-                      EGRESS_DIRECTION: 'physdev-in'}
+LINUX_DEV_LEN = 14
 
 
 class IptablesFirewallDriver(firewall.FirewallDriver):
     """Driver which enforces security groups through iptables rules."""
+    IPTABLES_DIRECTION = {INGRESS_DIRECTION: 'physdev-out',
+                          EGRESS_DIRECTION: 'physdev-in'}
 
-    def __init__(self, iptables_manager):
-        self.iptables = iptables_manager
-
+    def __init__(self):
+        self.iptables = iptables_manager.IptablesManager(
+            root_helper=cfg.CONF.AGENT.root_helper,
+            use_ipv6=True)
         # list of port which has security group
         self.filtered_ports = {}
         self._add_fallback_chain_v4v6()
@@ -56,7 +60,7 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
 
     def update_port_filter(self, port):
         LOG.debug(_("Updating device (%s) filter"), port['device'])
-        if not port['device'] in self.filtered_ports:
+        if port['device'] not in self.filtered_ports:
             LOG.info(_('Attempted to update port filter which is not '
                        'filtered %s'), port['device'])
             return
@@ -77,7 +81,7 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
         self.iptables.apply()
 
     def _setup_chains(self):
-        """Setup ingress and egress chain for a port. """
+        """Setup ingress and egress chain for a port."""
         self._add_chain_by_name_v4v6(SG_CHAIN)
         for port in self.filtered_ports.values():
             self._setup_chain(port, INGRESS_DIRECTION)
@@ -86,7 +90,7 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
             self.iptables.ipv6['filter'].add_rule(SG_CHAIN, '-j ACCEPT')
 
     def _remove_chains(self):
-        """Remove ingress and egress chain for a port"""
+        """Remove ingress and egress chain for a port."""
         for port in self.filtered_ports.values():
             self._remove_chain(port, INGRESS_DIRECTION)
             self._remove_chain(port, EGRESS_DIRECTION)
@@ -121,6 +125,9 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
         for rule in ipv6_rules:
             self.iptables.ipv6['filter'].add_rule(chain_name, rule)
 
+    def _get_device_name(self, port):
+        return port['device']
+
     def _add_chain(self, port, direction):
         chain_name = self._port_chain_name(port, direction)
         self._add_chain_by_name_v4v6(chain_name)
@@ -131,16 +138,16 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
         # We accept the packet at the end of SG_CHAIN.
 
         # jump to the security group chain
-        device = port['device']
+        device = self._get_device_name(port)
         jump_rule = ['-m physdev --physdev-is-bridged --%s '
-                     '%s -j $%s' % (IPTABLES_DIRECTION[direction],
+                     '%s -j $%s' % (self.IPTABLES_DIRECTION[direction],
                                     device,
                                     SG_CHAIN)]
         self._add_rule_to_chain_v4v6('FORWARD', jump_rule, jump_rule)
 
         # jump to the chain based on the device
         jump_rule = ['-m physdev --physdev-is-bridged --%s '
-                     '%s -j $%s' % (IPTABLES_DIRECTION[direction],
+                     '%s -j $%s' % (self.IPTABLES_DIRECTION[direction],
                                     device,
                                     chain_name)]
         self._add_rule_to_chain_v4v6(SG_CHAIN, jump_rule, jump_rule)
@@ -267,14 +274,22 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
         return []
 
     def _port_chain_name(self, port, direction):
-        #Note (nati) make chain name short less than 28 char
-        # with extra prefix
-        # ( see comment in iptables_manager )
-        return '%s%s' % (CHAIN_NAME_PREFIX[direction],
-                         port['device'][3:13])
+        return iptables_manager.get_chain_name(
+            '%s%s' % (CHAIN_NAME_PREFIX[direction], port['device'][3:]))
 
     def filter_defer_apply_on(self):
         self.iptables.defer_apply_on()
 
     def filter_defer_apply_off(self):
         self.iptables.defer_apply_off()
+
+
+class OVSHybridIptablesFirewallDriver(IptablesFirewallDriver):
+    OVS_HYBRID_TAP_PREFIX = 'tap'
+
+    def _port_chain_name(self, port, direction):
+        return iptables_manager.get_chain_name(
+            '%s%s' % (CHAIN_NAME_PREFIX[direction], port['device']))
+
+    def _get_device_name(self, port):
+        return (self.OVS_HYBRID_TAP_PREFIX + port['device'])[:LINUX_DEV_LEN]

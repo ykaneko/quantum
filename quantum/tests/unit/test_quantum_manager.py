@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,14 +17,17 @@
 
 import os
 import types
-import unittest2
+
+import fixtures
+
+from oslo.config import cfg
 
 from quantum.common import config
 from quantum.common.test_lib import test_config
 from quantum.manager import QuantumManager
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 from quantum.plugins.common import constants
+from quantum.tests import base
 from quantum.tests.unit import dummy_plugin
 
 
@@ -38,18 +41,21 @@ def etcdir(*p):
     return os.path.join(ETCDIR, *p)
 
 
-class QuantumManagerTestCase(unittest2.TestCase):
+class MultiServiceCorePlugin(object):
+    supported_extension_aliases = ['lbaas', 'dummy']
+
+
+class QuantumManagerTestCase(base.BaseTestCase):
 
     def setUp(self):
         super(QuantumManagerTestCase, self).setUp()
         args = ['--config-file', etcdir('quantum.conf.test')]
         # If test_config specifies some config-file, use it, as well
         config.parse(args=args)
-
-    def tearDown(self):
-        unittest2.TestCase.tearDown(self)
-        cfg.CONF.reset()
         QuantumManager._instance = None
+        self.addCleanup(cfg.CONF.reset)
+        self.useFixture(
+            fixtures.MonkeyPatch('quantum.manager.QuantumManager._instance'))
 
     def test_service_plugin_is_loaded(self):
         cfg.CONF.set_override("core_plugin",
@@ -58,7 +64,6 @@ class QuantumManagerTestCase(unittest2.TestCase):
         cfg.CONF.set_override("service_plugins",
                               ["quantum.tests.unit.dummy_plugin."
                                "DummyServicePlugin"])
-        QuantumManager._instance = None
         mgr = QuantumManager.get_instance()
         plugin = mgr.get_service_plugins()[constants.DUMMY]
 
@@ -70,15 +75,30 @@ class QuantumManagerTestCase(unittest2.TestCase):
     def test_multiple_plugins_specified_for_service_type(self):
         cfg.CONF.set_override("service_plugins",
                               ["quantum.tests.unit.dummy_plugin."
-                               "QuantumDummyPlugin",
+                               "DummyServicePlugin",
                                "quantum.tests.unit.dummy_plugin."
-                               "QuantumDummyPlugin"])
-        QuantumManager._instance = None
+                               "DummyServicePlugin"])
+        cfg.CONF.set_override("core_plugin",
+                              test_config.get('plugin_name_v2',
+                                              DB_PLUGIN_KLASS))
+        self.assertRaises(Exception, QuantumManager.get_instance)
 
-        try:
-            QuantumManager.get_instance().get_service_plugins()
-            self.assertTrue(False,
-                            "Shouldn't load multiple plugins "
-                            "for the same type")
-        except Exception as e:
-            LOG.debug(str(e))
+    def test_service_plugin_conflicts_with_core_plugin(self):
+        cfg.CONF.set_override("service_plugins",
+                              ["quantum.tests.unit.dummy_plugin."
+                               "DummyServicePlugin"])
+        cfg.CONF.set_override("core_plugin",
+                              "quantum.tests.unit.test_quantum_manager."
+                              "MultiServiceCorePlugin")
+        self.assertRaises(Exception, QuantumManager.get_instance)
+
+    def test_core_plugin_supports_services(self):
+        cfg.CONF.set_override("core_plugin",
+                              "quantum.tests.unit.test_quantum_manager."
+                              "MultiServiceCorePlugin")
+        mgr = QuantumManager.get_instance()
+        svc_plugins = mgr.get_service_plugins()
+        self.assertEqual(3, len(svc_plugins))
+        self.assertIn(constants.CORE, svc_plugins.keys())
+        self.assertIn(constants.LOADBALANCER, svc_plugins.keys())
+        self.assertIn(constants.DUMMY, svc_plugins.keys())

@@ -44,17 +44,22 @@ class CreateProbe(ProbeCommand):
         parser.add_argument(
             'id', metavar='network_id',
             help=_('ID of network to probe'))
+        parser.add_argument(
+            '--device-owner',
+            default='network', choices=['network', 'compute'],
+            help=_('owner type of the device: network/compute'))
         return parser
 
     def run(self, parsed_args):
         self.log.debug('run(%s)' % parsed_args)
         debug_agent = self.get_debug_agent()
-        port = debug_agent.create_probe(parsed_args.id)
+        port = debug_agent.create_probe(parsed_args.id,
+                                        parsed_args.device_owner)
         self.app.stdout.write(_('Probe created : %s ') % port.id + '\n')
 
 
 class DeleteProbe(ProbeCommand):
-    """Delete probe - delete port then uplug """
+    """Delete probe - delete port then uplug."""
 
     log = logging.getLogger(__name__ + '.DeleteProbe')
 
@@ -73,7 +78,7 @@ class DeleteProbe(ProbeCommand):
 
 
 class ListProbe(QuantumCommand, lister.Lister):
-    """ List probes """
+    """List probes."""
 
     log = logging.getLogger(__name__ + '.ListProbe')
     _formatters = {'fixed_ips': _format_fixed_ips, }
@@ -92,7 +97,7 @@ class ListProbe(QuantumCommand, lister.Lister):
 
 
 class ClearProbe(ProbeCommand):
-    """Clear All probes """
+    """Clear All probes."""
 
     log = logging.getLogger(__name__ + '.ClearProbe')
 
@@ -104,8 +109,7 @@ class ClearProbe(ProbeCommand):
 
 
 class ExecProbe(ProbeCommand):
-    """Exec commands on the namespace of the probe
-    """
+    """Exec commands on the namespace of the probe."""
 
     log = logging.getLogger(__name__ + '.ExecProbe')
 
@@ -129,8 +133,7 @@ class ExecProbe(ProbeCommand):
 
 
 class PingAll(ProbeCommand):
-    """Ping all fixed_ip
-    """
+    """Ping all fixed_ip."""
 
     log = logging.getLogger(__name__ + '.ExecProbe')
 

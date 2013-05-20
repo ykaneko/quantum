@@ -1,5 +1,5 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
-# Copyright 2012 OpenStack LLC
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -13,6 +13,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+
+import netaddr
 
 from quantum.agent.linux import utils
 from quantum.common import exceptions
@@ -88,12 +90,19 @@ class IPWrapper(SubProcessBase):
         self._as_root('', 'tuntap', ('add', name, 'mode', mode))
         return IPDevice(name, self.root_helper, self.namespace)
 
-    def add_veth(self, name1, name2):
-        self._as_root('', 'link',
-                      ('add', name1, 'type', 'veth', 'peer', 'name', name2))
+    def add_veth(self, name1, name2, namespace2=None):
+        args = ['add', name1, 'type', 'veth', 'peer', 'name', name2]
+
+        if namespace2 is None:
+            namespace2 = self.namespace
+        else:
+            self.ensure_namespace(namespace2)
+            args += ['netns', namespace2]
+
+        self._as_root('', 'link', tuple(args))
 
         return (IPDevice(name1, self.root_helper, self.namespace),
-                IPDevice(name2, self.root_helper, self.namespace))
+                IPDevice(name2, self.root_helper, namespace2))
 
     def add_dummy(self, name):
         self._as_root('', 'link', ('add', name, 'type', 'dummy'))
@@ -191,6 +200,9 @@ class IpLinkCommand(IpDeviceCommandBase):
         self._as_root('set', self.name, 'name', name)
         self._parent.name = name
 
+    def set_alias(self, alias_name):
+        self._as_root('set', self.name, 'alias', alias_name)
+
     def delete(self):
         self._as_root('delete', self.name)
 
@@ -213,6 +225,10 @@ class IpLinkCommand(IpDeviceCommandBase):
     @property
     def qlen(self):
         return self.attributes.get('qlen')
+
+    @property
+    def alias(self):
+        return self.attributes.get('alias')
 
     @property
     def attributes(self):
@@ -277,8 +293,15 @@ class IpAddrCommand(IpDeviceCommandBase):
                 broadcast = '::'
             else:
                 version = 4
-                broadcast = parts[3]
-                scope = parts[5]
+                if parts[2] == 'brd':
+                    broadcast = parts[3]
+                    scope = parts[5]
+                else:
+                    # sometimes output of 'ip a' might look like:
+                    # inet 192.168.100.100/24 scope global eth0
+                    # and broadcast needs to be calculated from CIDR
+                    broadcast = str(netaddr.IPNetwork(parts[1]).broadcast)
+                    scope = parts[3]
 
             retval.append(dict(cidr=parts[1],
                                broadcast=broadcast,
@@ -292,7 +315,7 @@ class IpRouteCommand(IpDeviceCommandBase):
     COMMAND = 'route'
 
     def add_gateway(self, gateway, metric=None):
-        args = ['add', 'default', 'via', gateway]
+        args = ['replace', 'default', 'via', gateway]
         if metric:
             args += ['metric', metric]
         args += ['dev', self.name]
@@ -332,8 +355,7 @@ class IpRouteCommand(IpDeviceCommandBase):
         return retval
 
     def pullup_route(self, interface_name):
-        """
-        Ensures that the route entry for the interface is before all
+        """Ensures that the route entry for the interface is before all
         others on the same subnet.
         """
         device_list = []
@@ -342,7 +364,7 @@ class IpRouteCommand(IpDeviceCommandBase):
         for device_route_line in device_route_list_lines:
             try:
                 subnet = device_route_line.split()[0]
-            except:
+            except Exception:
                 continue
             subnet_route_list_lines = self._run('list', 'proto', 'kernel',
                                                 'match', subnet).split('\n')
@@ -355,7 +377,7 @@ class IpRouteCommand(IpDeviceCommandBase):
                     while(i.next() != 'src'):
                         pass
                     src = i.next()
-                except:
+                except Exception:
                     src = ''
                 if device != interface_name:
                     device_list.append((device, src))

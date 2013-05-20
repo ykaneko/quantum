@@ -20,18 +20,17 @@
 Unit tests for Windows Hyper-V virtual switch quantum driver
 """
 
-import sys
-
 import mock
-import unittest2 as unittest
+from oslo.config import cfg
 
-from quantum.openstack.common import cfg
 from quantum.plugins.hyperv.agent import hyperv_quantum_agent
+from quantum.tests import base
 
 
-class TestHyperVQuantumAgent(unittest.TestCase):
+class TestHyperVQuantumAgent(base.BaseTestCase):
 
     def setUp(self):
+        super(TestHyperVQuantumAgent, self).setUp()
         self.addCleanup(cfg.CONF.reset)
         # Avoid rpc initialization for unit tests
         cfg.CONF.set_override('rpc_backend',
@@ -41,9 +40,6 @@ class TestHyperVQuantumAgent(unittest.TestCase):
         self.agent.context = mock.Mock()
         self.agent.agent_id = mock.Mock()
         self.agent._utils = mock.Mock()
-
-    def tearDown(self):
-        cfg.CONF.reset()
 
     def test_port_bound(self):
         port = mock.Mock()
@@ -76,7 +72,8 @@ class TestHyperVQuantumAgent(unittest.TestCase):
         self.assertTrue(self.agent._treat_devices_added([{}]))
 
     def mock_treat_devices_added(self, details, func_name):
-        """
+        """Mock treat devices added.
+
         :param details: the details to return for the device
         :param func_name: the function that should be called
         :returns: whether the named function was called

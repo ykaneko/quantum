@@ -18,11 +18,12 @@
 # @author: Ryota MIBU
 #
 
+from oslo.config import cfg
+
 from quantum.api import extensions
 from quantum.api.v2 import attributes
 from quantum.api.v2 import base
 from quantum.manager import QuantumManager
-from quantum.openstack.common import cfg
 from quantum import quota
 
 
@@ -127,4 +128,6 @@ class Packetfilter(extensions.ExtensionDescriptor):
                                             quota._count_resource,
                                             'quota_packet_filter')
         quota.QUOTAS.register_resource(qresource)
-        return [extensions.ResourceExtension('packet_filters', resource)]
+        return [extensions.ResourceExtension('packet_filters',
+                                             resource,
+                                             attr_map=PACKET_FILTER_ATTR_MAP)]

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,12 +15,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo.config import cfg
+
+from quantum.agent.common import config as agent_config
 from quantum.agent import l3_agent
 from quantum.agent.linux import interface
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.common import config
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 
@@ -42,22 +44,16 @@ def setup_conf():
                            'bridges.'))
     ]
 
-    agent_opts = [
-        cfg.StrOpt('root_helper', default='sudo',
-                   help=_("Root helper application.")),
-    ]
-
-    conf = cfg.CommonConfigOpts()
+    conf = cfg.CONF
     conf.register_cli_opts(opts)
     conf.register_opts(l3_agent.L3NATAgent.OPTS)
     conf.register_opts(interface.OPTS)
-    conf.register_opts(agent_opts, 'AGENT')
-    config.setup_logging(conf)
+    agent_config.register_root_helper(conf)
     return conf
 
 
 def collect_quantum_ports(bridges, root_helper):
-    """Collect ports created by Quantum from OVS"""
+    """Collect ports created by Quantum from OVS."""
     ports = []
     for bridge in bridges:
         ovs = ovs_lib.OVSBridge(bridge, root_helper)
@@ -85,6 +81,7 @@ def main():
 
     conf = setup_conf()
     conf()
+    config.setup_logging(conf)
 
     configuration_bridges = set([conf.ovs_integration_bridge,
                                  conf.external_network_bridge])

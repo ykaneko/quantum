@@ -15,10 +15,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo.config import cfg
+
 from quantum.db import api as db
 from quantum.db import db_base_plugin_v2
 from quantum.db import l3_db
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 from quantumclient.common import exceptions
 from quantumclient.v2_0 import client
@@ -53,7 +54,7 @@ class ProxyPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         try:
             subnet_in_db = super(ProxyPluginV2, self).create_subnet(
                 context, subnet)
-        except:
+        except Exception:
             self._get_client().delete_subnet(subnet_remote['id'])
         return subnet_in_db
 
@@ -81,7 +82,7 @@ class ProxyPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         try:
             network_in_db = super(ProxyPluginV2, self).create_network(
                 context, network)
-        except:
+        except Exception:
             self._get_client().delete_network(network_remote['id'])
         return network_in_db
 
@@ -109,7 +110,7 @@ class ProxyPluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         try:
             port_in_db = super(ProxyPluginV2, self).create_port(
                 context, port)
-        except:
+        except Exception:
             self._get_client().delete_port(port_remote['id'])
         return port_in_db
 

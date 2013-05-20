@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-#    Copyright 2011 OpenStack LLC
+#    Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -16,8 +16,10 @@
 
 """Quotas for instances, volumes, and floating ips."""
 
+from oslo.config import cfg
+import webob
+
 from quantum.common import exceptions
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 
@@ -52,14 +54,16 @@ cfg.CONF.register_opts(quota_opts, 'QUOTAS')
 
 
 class ConfDriver(object):
-    """
+    """Configuration driver.
+
     Driver to perform necessary checks to enforce quotas and obtain
     quota information. The default driver utilizes the default values
     in quantum.conf.
     """
 
     def _get_quotas(self, context, resources, keys):
-        """
+        """Get quotas.
+
         A helper method which retrieves the quotas for the specific
         resources identified by keys, and which apply to the current
         context.
@@ -123,13 +127,32 @@ class ConfDriver(object):
             raise exceptions.OverQuota(overs=sorted(overs), quotas=quotas,
                                        usages={})
 
+    @staticmethod
+    def get_tenant_quotas(context, resources, tenant_id):
+        quotas = {}
+        sub_resources = dict((k, v) for k, v in resources.items())
+        for resource in sub_resources.values():
+            quotas[resource.name] = resource.default
+        return quotas
+
+    @staticmethod
+    def get_all_quotas(context, resources):
+        return []
+
+    @staticmethod
+    def delete_tenant_quota(context, tenant_id):
+        raise webob.exc.HTTPForbidden()
+
+    @staticmethod
+    def update_quota_limit(context, tenant_id, resource, limit):
+        raise webob.exc.HTTPForbidden()
+
 
 class BaseResource(object):
     """Describe a single resource for quota checking."""
 
     def __init__(self, name, flag):
-        """
-        Initializes a Resource.
+        """Initializes a resource.
 
         :param name: The name of the resource, i.e., "instances".
         :param flag: The name of the flag or configuration option
@@ -147,8 +170,7 @@ class BaseResource(object):
 
 
 class CountableResource(BaseResource):
-    """Describe a resource where the counts are determined by a function.
-    """
+    """Describe a resource where the counts are determined by a function."""
 
     def __init__(self, name, count, flag=None):
         """Initializes a CountableResource.

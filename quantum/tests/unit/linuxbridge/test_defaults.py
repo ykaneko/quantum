@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,24 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest2 as unittest
+from oslo.config import cfg
 
-from quantum.openstack.common import cfg
-#NOTE this import loads tests required options
-from quantum.plugins.linuxbridge.common import config
+from quantum.plugins.linuxbridge.common import config  # noqa
+from quantum.tests import base
 
 
-class ConfigurationTest(unittest.TestCase):
+class ConfigurationTest(base.BaseTestCase):
 
     def test_defaults(self):
-        self.assertEqual('sqlite://',
-                         cfg.CONF.DATABASE.sql_connection)
-        self.assertEqual(-1,
-                         cfg.CONF.DATABASE.sql_max_retries)
-        self.assertEqual(2,
-                         cfg.CONF.DATABASE.reconnect_interval)
         self.assertEqual(2,
                          cfg.CONF.AGENT.polling_interval)
+        self.assertEqual(True,
+                         cfg.CONF.AGENT.rpc_support_old_agents)
         self.assertEqual('sudo',
                          cfg.CONF.AGENT.root_helper)
         self.assertEqual('local',

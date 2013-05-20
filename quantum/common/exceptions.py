@@ -20,17 +20,16 @@ Quantum base exception handling.
 """
 
 from quantum.openstack.common.exception import Error
-from quantum.openstack.common.exception import InvalidContentType
+from quantum.openstack.common.exception import InvalidContentType  # noqa
 from quantum.openstack.common.exception import OpenstackException
 
 
 class QuantumException(OpenstackException):
-    """Base Quantum Exception
+    """Base Quantum Exception.
 
     To correctly use this class, inherit from it and define
     a 'message' property. That message will get printf'd
     with the keyword arguments provided to the constructor.
-
     """
     message = _("An unknown exception occurred.")
 
@@ -80,8 +79,12 @@ class PortNotFound(NotFound):
                 "on network %(net_id)s")
 
 
-class PolicyNotFound(NotFound):
+class PolicyFileNotFound(NotFound):
     message = _("Policy configuration policy.json could not be found")
+
+
+class PolicyRuleNotFound(NotFound):
+    message = _("Requested rule:%(rule)s cannot be found")
 
 
 class StateInvalid(BadRequest):
@@ -94,7 +97,7 @@ class InUse(QuantumException):
 
 class NetworkInUse(InUse):
     message = _("Unable to complete operation on network %(net_id)s. "
-                "There is one or more ports still in use on the network.")
+                "There are one or more ports still in use on the network.")
 
 
 class SubnetInUse(InUse):
@@ -228,6 +231,10 @@ class OverQuota(Conflict):
     message = _("Quota exceeded for resources: %(overs)s")
 
 
+class QuotaMissingTenant(BadRequest):
+    message = _("Tenant-id was missing from Quota request")
+
+
 class InvalidQuotaValue(Conflict):
     message = _("Change would make usage less than 0 for the following "
                 "resources: %(unders)s")
@@ -238,7 +245,7 @@ class InvalidSharedSetting(Conflict):
                 "%(network)s. Multiple tenants are using it")
 
 
-class InvalidExtenstionEnv(BadRequest):
+class InvalidExtensionEnv(BadRequest):
     message = _("Invalid extension environment: %(reason)s")
 
 
@@ -249,3 +256,12 @@ class TooManyExternalNetworks(QuantumException):
 class InvalidConfigurationOption(QuantumException):
     message = _("An invalid value was provided for %(opt_name)s: "
                 "%(opt_value)s")
+
+
+class GatewayConflictWithAllocationPools(InUse):
+    message = _("Gateway ip %(ip_address)s conflicts with "
+                "allocation pool %(pool)s")
+
+
+class NetworkVlanRangeError(QuantumException):
+    message = _("Invalid network VLAN range: '%(range)s' - '%(error)s'")

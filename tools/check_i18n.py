@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-#    Copyright 2012 OpenStack LLC
+#    Copyright 2012 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -21,7 +21,7 @@ import sys
 
 
 def is_localized(node):
-    """ Check message wrapped by _() """
+    """Check message wrapped by _()"""
     if isinstance(node.parent, compiler.ast.CallFunc):
         if isinstance(node.parent.node, compiler.ast.Name):
             if node.parent.node.name == '_':
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     cfg_path = sys.argv[2]
     try:
         cfg_mod = imp.load_source('', cfg_path)
-    except:
+    except Exception:
         print >> sys.stderr, "Load cfg module failed"
         sys.exit(1)
 

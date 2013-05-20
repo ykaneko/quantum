@@ -18,9 +18,10 @@
 
 import os
 
+from oslo.config import cfg
+
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import utils
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -61,12 +62,7 @@ class ProcessManager(object):
 
         if self.active:
             cmd = ['kill', '-9', pid]
-            if self.namespace:
-                ip_wrapper = ip_lib.IPWrapper(self.root_helper, self.namespace)
-                ip_wrapper.netns.execute(cmd)
-            else:
-                utils.execute(cmd, self.root_helper)
-
+            utils.execute(cmd, self.root_helper)
         elif pid:
             LOG.debug(_('Process for %(uuid)s pid %(pid)d is stale, ignoring '
                         'command'), {'uuid': self.uuid, 'pid': pid})
@@ -90,9 +86,9 @@ class ProcessManager(object):
         try:
             with open(file_name, 'r') as f:
                 return int(f.read())
-        except IOError, e:
+        except IOError:
             msg = _('Unable to access %s')
-        except ValueError, e:
+        except ValueError:
             msg = _('Unable to convert value in %s')
 
         LOG.debug(msg, file_name)
@@ -107,5 +103,5 @@ class ProcessManager(object):
         cmd = ['cat', '/proc/%s/cmdline' % pid]
         try:
             return self.uuid in utils.execute(cmd, self.root_helper)
-        except RuntimeError, e:
+        except RuntimeError:
             return False

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,15 +17,16 @@
 
 import inspect
 import logging
-import mock
 import os
+
+import mock
+from oslo.config import cfg
 import webtest
 
 from quantum.api.extensions import PluginAwareExtensionManager
 from quantum.api.v2 import router
 from quantum.common import config
 from quantum.manager import QuantumManager
-from quantum.openstack.common import cfg
 from quantum.tests.unit import test_api_v2
 
 
@@ -39,6 +40,7 @@ def curdir(*p):
 class APIv2TestCase(test_api_v2.APIv2TestCase):
 
     def setUp(self):
+        super(APIv2TestCase, self).setUp()
         plugin = 'quantum.plugins.cisco.network_plugin.PluginV2'
         # Ensure 'stale' patched copies of the plugin are never returned
         QuantumManager._instance = None

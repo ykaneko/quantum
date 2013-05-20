@@ -21,8 +21,9 @@
 import sys
 import time
 
+from oslo.config import cfg
+
 from quantum.common import exceptions as q_exc
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 # Check needed for unit testing on Unix
@@ -35,12 +36,6 @@ LOG = logging.getLogger(__name__)
 
 class HyperVException(q_exc.QuantumException):
     message = _('HyperVException: %(msg)s')
-
-SET_ACCESS_MODE = 0
-VLAN_ID_ADD = 1
-VLAN_ID_REMOVE = 2
-ENDPOINT_MODE_ACCESS = 2
-ENDPOINT_MODE_TRUNK = 5
 
 WMI_JOB_STATE_RUNNING = 4
 WMI_JOB_STATE_COMPLETED = 7
@@ -77,7 +72,7 @@ class HyperVUtils(object):
     def _get_vnic_settings(self, vnic_name):
         vnic_settings = self._conn.Msvm_SyntheticEthernetPortSettingData(
             ElementName=vnic_name)
-        if not len(vnic_settings):
+        if not vnic_settings:
             raise HyperVException(msg=_('Vnic not found: %s') % vnic_name)
         return vnic_settings[0]
 
@@ -110,11 +105,11 @@ class HyperVUtils(object):
         self._check_job_status(ret_val, job_path)
 
     def _check_job_status(self, ret_val, jobpath):
-        """Poll WMI job state for completion"""
+        """Poll WMI job state for completion."""
         if not ret_val:
             return
         elif ret_val != WMI_JOB_STATE_RUNNING:
-            raise HyperVException(msg=_('Job failed with error %d' % ret_val))
+            raise HyperVException(msg=_('Job failed with error %d') % ret_val)
 
         job_wmi_path = jobpath.replace('\\', '/')
         job = wmi.WMI(moniker=job_wmi_path)
@@ -128,28 +123,34 @@ class HyperVUtils(object):
                 err_sum_desc = job.ErrorSummaryDescription
                 err_desc = job.ErrorDescription
                 err_code = job.ErrorCode
+                data = {'job_state': job_state,
+                        'err_sum_desc': err_sum_desc,
+                        'err_desc': err_desc,
+                        'err_code': err_code}
                 raise HyperVException(
                     msg=_("WMI job failed with status %(job_state)d. "
                           "Error details: %(err_sum_desc)s - %(err_desc)s - "
-                          "Error code: %(err_code)d") % locals())
+                          "Error code: %(err_code)d") % data)
             else:
                 (error, ret_val) = job.GetError()
                 if not ret_val and error:
+                    data = {'job_state': job_state,
+                            'error': error}
                     raise HyperVException(
                         msg=_("WMI job failed with status %(job_state)d. "
-                              "Error details: %(error)s") % locals())
+                              "Error details: %(error)s") % data)
                 else:
                     raise HyperVException(
-                        msg=_("WMI job failed with status %(job_state)d. "
-                              "No error description available") % locals())
+                        msg=_("WMI job failed with status %d. "
+                              "No error description available") % job_state)
 
         desc = job.Description
         elap = job.ElapsedTime
         LOG.debug(_("WMI job succeeded: %(desc)s, Elapsed=%(elap)s") %
-                  locals())
+                  {'desc': desc, 'elap': elap})
 
     def _create_switch_port(self, vswitch_name, switch_port_name):
-        """ Creates a switch port """
+        """Creates a switch port."""
         switch_svc = self._conn.Msvm_VirtualSwitchManagementService()[0]
         vswitch_path = self._get_vswitch(vswitch_name).path_()
         (new_port, ret_val) = switch_svc.CreateSwitchPort(
@@ -164,7 +165,7 @@ class HyperVUtils(object):
 
     def disconnect_switch_port(
             self, vswitch_name, switch_port_name, delete_port):
-        """ Disconnects the switch port """
+        """Disconnects the switch port."""
         switch_svc = self._conn.Msvm_VirtualSwitchManagementService()[0]
         switch_port_path = self._get_switch_port_path_by_name(
             switch_port_name)
@@ -175,22 +176,28 @@ class HyperVUtils(object):
         (ret_val, ) = switch_svc.DisconnectSwitchPort(
             SwitchPort=switch_port_path)
         if ret_val != 0:
+            data = {'switch_port_name': switch_port_name,
+                    'vswitch_name': vswitch_name,
+                    'ret_val': ret_val}
             raise HyperVException(
                 msg=_('Failed to disconnect port %(switch_port_name)s '
                       'from switch %(vswitch_name)s '
-                      'with error %(ret_val)s') % locals())
+                      'with error %(ret_val)s') % data)
         if delete_port:
             (ret_val, ) = switch_svc.DeleteSwitchPort(
                 SwitchPort=switch_port_path)
             if ret_val != 0:
+                data = {'switch_port_name': switch_port_name,
+                        'vswitch_name': vswitch_name,
+                        'ret_val': ret_val}
                 raise HyperVException(
                     msg=_('Failed to delete port %(switch_port_name)s '
                           'from switch %(vswitch_name)s '
-                          'with error %(ret_val)s') % locals())
+                          'with error %(ret_val)s') % data)
 
     def _get_vswitch(self, vswitch_name):
         vswitch = self._conn.Msvm_VirtualSwitch(ElementName=vswitch_name)
-        if not len(vswitch):
+        if not vswitch:
             raise HyperVException(msg=_('VSwitch not found: %s') %
                                   vswitch_name)
         return vswitch[0]
@@ -201,46 +208,11 @@ class HyperVUtils(object):
         for vswitch_port in vswitch_ports:
             lan_endpoints = vswitch_port.associators(
                 wmi_result_class='Msvm_SwitchLanEndpoint')
-            if len(lan_endpoints):
+            if lan_endpoints:
                 ext_port = lan_endpoints[0].associators(
                     wmi_result_class='Msvm_ExternalEthernetPort')
                 if ext_port:
                     return vswitch_port
-
-    def _set_vswitch_external_port_vlan_id(self, vswitch_name, action,
-                                           vlan_id=None):
-        vswitch = self._get_vswitch(vswitch_name)
-        ext_port = self._get_vswitch_external_port(vswitch)
-        if not ext_port:
-            return
-
-        vlan_endpoint = ext_port.associators(
-            wmi_association_class='Msvm_BindsTo')[0]
-        vlan_endpoint_settings = vlan_endpoint.associators(
-            wmi_association_class='Msvm_NetworkElementSettingData')[0]
-
-        mode = ENDPOINT_MODE_TRUNK
-        trunked_vlans = vlan_endpoint_settings.TrunkedVLANList
-        new_trunked_vlans = trunked_vlans
-        if action == VLAN_ID_ADD:
-            if vlan_id not in trunked_vlans:
-                new_trunked_vlans += (vlan_id,)
-        elif action == VLAN_ID_REMOVE:
-            if vlan_id in trunked_vlans:
-                new_trunked_vlans = [
-                    v for v in trunked_vlans if v != vlan_id
-                ]
-        elif action == SET_ACCESS_MODE:
-            mode = ENDPOINT_MODE_ACCESS
-            new_trunked_vlans = ()
-
-        if vlan_endpoint.DesiredEndpointMode != mode:
-            vlan_endpoint.DesiredEndpointMode = mode
-            vlan_endpoint.put()
-
-        if len(trunked_vlans) != len(new_trunked_vlans):
-            vlan_endpoint_settings.TrunkedVLANList = new_trunked_vlans
-            vlan_endpoint_settings.put()
 
     def set_vswitch_port_vlan_id(self, vlan_id, switch_port_name):
         vlan_endpoint_settings = self._conn.Msvm_VLANEndpointSettingData(
@@ -248,22 +220,6 @@ class HyperVUtils(object):
         if vlan_endpoint_settings.AccessVLAN != vlan_id:
             vlan_endpoint_settings.AccessVLAN = vlan_id
             vlan_endpoint_settings.put()
-
-    def set_vswitch_mode_access(self, vswitch_name):
-        LOG.info(_('Setting vswitch %s in access mode (flat)'), vswitch_name)
-        self._set_vswitch_external_port_vlan_id(vswitch_name, SET_ACCESS_MODE)
-
-    def add_vlan_id_to_vswitch(self, vlan_id, vswitch_name):
-        LOG.info(_('Adding VLAN %s to vswitch %s'),
-                 vlan_id, vswitch_name)
-        self._set_vswitch_external_port_vlan_id(vswitch_name, VLAN_ID_ADD,
-                                                vlan_id)
-
-    def remove_vlan_id_from_vswitch(self, vlan_id, vswitch_name):
-        LOG.info(_('Removing VLAN %s from vswitch %s'),
-                 vlan_id, vswitch_name)
-        self._set_vswitch_external_port_vlan_id(vswitch_name, VLAN_ID_REMOVE,
-                                                vlan_id)
 
     def _get_switch_port_path_by_name(self, switch_port_name):
         vswitch = self._conn.Msvm_SwitchPort(ElementName=switch_port_name)

@@ -24,19 +24,24 @@ import sys
 import time
 
 import eventlet
+from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.agent.linux import utils
 from quantum.agent import rpc as agent_rpc
+from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum.common import config as logging_config
+from quantum.common import constants as q_const
 from quantum.common import topics
 from quantum.common import utils as q_utils
 from quantum import context
-from quantum.openstack.common import cfg
+from quantum.extensions import securitygroup as ext_sg
 from quantum.openstack.common import log as logging
+from quantum.openstack.common import loopingcall
+from quantum.openstack.common.rpc import common as rpc_common
 from quantum.openstack.common.rpc import dispatcher
-from quantum.plugins.openvswitch.common import config
+from quantum.plugins.openvswitch.common import config  # noqa
 from quantum.plugins.openvswitch.common import constants
 
 
@@ -85,7 +90,7 @@ class Port(object):
             return (self and other
                     and self.id == other.id
                     and self.admin_state_up == other.admin_state_up)
-        except:
+        except Exception:
             return False
 
     def __ne__(self, other):
@@ -95,7 +100,20 @@ class Port(object):
         return hash(self.id)
 
 
-class OVSQuantumAgent(object):
+class OVSPluginApi(agent_rpc.PluginApi,
+                   sg_rpc.SecurityGroupServerRpcApiMixin):
+    pass
+
+
+class OVSSecurityGroupAgent(sg_rpc.SecurityGroupAgentRpcMixin):
+    def __init__(self, context, plugin_rpc, root_helper):
+        self.context = context
+        self.plugin_rpc = plugin_rpc
+        self.root_helper = root_helper
+        self.init_firewall()
+
+
+class OVSQuantumAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
     '''Implements OVS-based tunneling, VLANs and flat networks.
 
     Two local bridges are created: an integration bridge (defaults to
@@ -128,8 +146,10 @@ class OVSQuantumAgent(object):
     # Upper bound on available vlans.
     MAX_VLAN_TAG = 4094
 
-    # Set RPC API version to 1.0 by default.
-    RPC_API_VERSION = '1.0'
+    # history
+    #   1.0 Initial version
+    #   1.1 Support Security Group RPC
+    RPC_API_VERSION = '1.1'
 
     def __init__(self, integ_br, tun_br, local_ip,
                  bridge_mappings, root_helper,
@@ -159,14 +179,38 @@ class OVSQuantumAgent(object):
         self.tunnel_count = 0
         if self.enable_tunneling:
             self.setup_tunnel_br(tun_br)
-
+        self.agent_state = {
+            'binary': 'quantum-openvswitch-agent',
+            'host': cfg.CONF.host,
+            'topic': q_const.L2_AGENT_TOPIC,
+            'configurations': bridge_mappings,
+            'agent_type': q_const.AGENT_TYPE_OVS,
+            'start_flag': True}
         self.setup_rpc(integ_br)
+
+        # Security group agent supprot
+        self.sg_agent = OVSSecurityGroupAgent(self.context,
+                                              self.plugin_rpc,
+                                              root_helper)
+
+    def _report_state(self):
+        try:
+            # How many devices are likely used by a VM
+            ports = self.int_br.get_vif_port_set()
+            num_devices = len(ports)
+            self.agent_state.get('configurations')['devices'] = num_devices
+            self.state_rpc.report_state(self.context,
+                                        self.agent_state)
+            self.agent_state.pop('start_flag', None)
+        except Exception:
+            LOG.exception(_("Failed reporting state!"))
 
     def setup_rpc(self, integ_br):
         mac = utils.get_interface_mac(integ_br)
         self.agent_id = '%s%s' % ('ovs', (mac.replace(":", "")))
         self.topic = topics.AGENT
-        self.plugin_rpc = agent_rpc.PluginApi(topics.PLUGIN)
+        self.plugin_rpc = OVSPluginApi(topics.PLUGIN)
+        self.state_rpc = agent_rpc.PluginReportStateAPI(topics.PLUGIN)
 
         # RPC network init
         self.context = context.get_admin_context_without_session()
@@ -175,10 +219,16 @@ class OVSQuantumAgent(object):
         # Define the listening consumers for the agent
         consumers = [[topics.PORT, topics.UPDATE],
                      [topics.NETWORK, topics.DELETE],
-                     [constants.TUNNEL, topics.UPDATE]]
+                     [constants.TUNNEL, topics.UPDATE],
+                     [topics.SECURITY_GROUP, topics.UPDATE]]
         self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)
+        report_interval = cfg.CONF.AGENT.report_interval
+        if report_interval:
+            heartbeat = loopingcall.FixedIntervalLoopingCall(
+                self._report_state)
+            heartbeat.start(interval=report_interval)
 
     def get_net_uuid(self, vif_id):
         for network_id, vlan_mapping in self.local_vlan_map.iteritems():
@@ -203,20 +253,26 @@ class OVSQuantumAgent(object):
         vif_port = self.int_br.get_vif_port_by_id(port['id'])
         if not vif_port:
             return
+
+        if ext_sg.SECURITYGROUPS in port:
+            self.sg_agent.refresh_firewall()
         network_type = kwargs.get('network_type')
         segmentation_id = kwargs.get('segmentation_id')
         physical_network = kwargs.get('physical_network')
         self.treat_vif_port(vif_port, port['id'], port['network_id'],
                             network_type, physical_network,
                             segmentation_id, port['admin_state_up'])
-        if port['admin_state_up']:
-            # update plugin about port status
-            self.plugin_rpc.update_device_up(self.context, port['id'],
-                                             self.agent_id)
-        else:
-            # update plugin about port status
-            self.plugin_rpc.update_device_down(self.context, port['id'],
-                                               self.agent_id)
+        try:
+            if port['admin_state_up']:
+                # update plugin about port status
+                self.plugin_rpc.update_device_up(self.context, port['id'],
+                                                 self.agent_id)
+            else:
+                # update plugin about port status
+                self.plugin_rpc.update_device_down(self.context, port['id'],
+                                                   self.agent_id)
+        except rpc_common.Timeout:
+            LOG.error(_("RPC timeout while updating port %s"), port['id'])
 
     def tunnel_update(self, context, **kwargs):
         LOG.debug(_("tunnel_update received"))
@@ -293,7 +349,8 @@ class OVSQuantumAgent(object):
                 LOG.error(_("Cannot provision flat network for "
                             "net-id=%(net_uuid)s - no bridge for "
                             "physical_network %(physical_network)s"),
-                          locals())
+                          {'net_uuid': net_uuid,
+                           'physical_network': physical_network})
         elif network_type == constants.TYPE_VLAN:
             if physical_network in self.phys_brs:
                 # outbound
@@ -312,21 +369,24 @@ class OVSQuantumAgent(object):
                 LOG.error(_("Cannot provision VLAN network for "
                             "net-id=%(net_uuid)s - no bridge for "
                             "physical_network %(physical_network)s"),
-                          locals())
+                          {'net_uuid': net_uuid,
+                           'physical_network': physical_network})
         elif network_type == constants.TYPE_LOCAL:
             # no flows needed for local networks
             pass
         else:
             LOG.error(_("Cannot provision unknown network type "
                         "%(network_type)s for net-id=%(net_uuid)s"),
-                      locals())
+                      {'network_type': network_type,
+                       'net_uuid': net_uuid})
 
     def reclaim_local_vlan(self, net_uuid, lvm):
         '''Reclaim a local VLAN.
 
         :param net_uuid: the network uuid associated with this vlan.
         :param lvm: a LocalVLANMapping object that tracks (vlan, lsw_id,
-            vif_ids) mapping.'''
+            vif_ids) mapping.
+        '''
         LOG.info(_("Reclaiming vlan = %(vlan_id)s from net-id = %(net_uuid)s"),
                  {'vlan_id': lvm.vlan,
                   'net_uuid': net_uuid})
@@ -406,7 +466,8 @@ class OVSQuantumAgent(object):
         VIF.
 
         :param vif_id: the id of the vif
-        :param net_uuid: the net_uuid this port is associated with.'''
+        :param net_uuid: the net_uuid this port is associated with.
+        '''
         if net_uuid is None:
             net_uuid = self.get_net_uuid(vif_id)
 
@@ -415,14 +476,13 @@ class OVSQuantumAgent(object):
                      net_uuid)
             return
         lvm = self.local_vlan_map[net_uuid]
-        if lvm.network_type == 'gre':
-            if self.enable_tunneling:
+
+        vif_port = lvm.vif_ports.pop(vif_id, None)
+        if vif_port:
+            if self.enable_tunneling and lvm.network_type == 'gre':
                 # remove inbound unicast flow
                 self.tun_br.delete_flows(tun_id=lvm.segmentation_id,
-                                         dl_dst=lvm.vif_ports[vif_id].vif_mac)
-
-        if vif_id in lvm.vif_ports:
-            del lvm.vif_ports[vif_id]
+                                         dl_dst=vif_port.vif_mac)
         else:
             LOG.info(_('port_unbound: vif_id %s not in local_vlan_map'),
                      vif_id)
@@ -433,7 +493,8 @@ class OVSQuantumAgent(object):
     def port_dead(self, port):
         '''Once a port has no binding, put it on the "dead vlan".
 
-        :param port: a ovs_lib.VifPort object.'''
+        :param port: a ovs_lib.VifPort object.
+        '''
         self.int_br.set_db_attribute("Port", port.port_name, "tag",
                                      DEAD_VLAN_TAG)
         self.int_br.add_flow(priority=2, in_port=port.ofport, actions="drop")
@@ -459,7 +520,8 @@ class OVSQuantumAgent(object):
         Creates tunnel bridge, and links it to the integration bridge
         using a patch port.
 
-        :param tun_br: the name of the tunnel bridge.'''
+        :param tun_br: the name of the tunnel bridge.
+        '''
         self.tun_br = ovs_lib.OVSBridge(tun_br, self.root_helper)
         self.tun_br.reset_bridge()
         self.patch_tun_ofport = self.int_br.add_patch_port(
@@ -481,7 +543,8 @@ class OVSQuantumAgent(object):
         Creates physical network bridges and links them to the
         integration bridge using veths.
 
-        :param bridge_mappings: map physical network names to bridge names.'''
+        :param bridge_mappings: map physical network names to bridge names.
+        '''
         self.phys_brs = {}
         self.int_ofports = {}
         self.phys_ofports = {}
@@ -489,13 +552,15 @@ class OVSQuantumAgent(object):
         for physical_network, bridge in bridge_mappings.iteritems():
             LOG.info(_("Mapping physical network %(physical_network)s to "
                        "bridge %(bridge)s"),
-                     locals())
+                     {'physical_network': physical_network,
+                      'bridge': bridge})
             # setup physical bridge
             if not ip_lib.device_exists(bridge, self.root_helper):
                 LOG.error(_("Bridge %(bridge)s for physical network "
                             "%(physical_network)s does not exist. Agent "
                             "terminated!"),
-                          locals())
+                          {'physical_network': physical_network,
+                           'bridge': bridge})
                 sys.exit(1)
             br = ovs_lib.OVSBridge(bridge, self.root_helper)
             br.remove_all_flows()
@@ -549,6 +614,7 @@ class OVSQuantumAgent(object):
 
     def treat_devices_added(self, devices):
         resync = False
+        self.sg_agent.prepare_devices_filter(devices)
         for device in devices:
             LOG.info(_("Port %s added"), device)
             try:
@@ -557,13 +623,14 @@ class OVSQuantumAgent(object):
                                                              self.agent_id)
             except Exception as e:
                 LOG.debug(_("Unable to get port details for "
-                            "%(device)s: %(e)s"), locals())
+                            "%(device)s: %(e)s"),
+                          {'device': device, 'e': e})
                 resync = True
                 continue
             port = self.int_br.get_vif_port_by_id(details['device'])
             if 'port_id' in details:
                 LOG.info(_("Port %(device)s updated. Details: %(details)s"),
-                         locals())
+                         {'device': device, 'details': details})
                 self.treat_vif_port(port, details['port_id'],
                                     details['network_id'],
                                     details['network_type'],
@@ -578,6 +645,7 @@ class OVSQuantumAgent(object):
 
     def treat_devices_removed(self, devices):
         resync = False
+        self.sg_agent.remove_devices_filter(devices)
         for device in devices:
             LOG.info(_("Attachment %s removed"), device)
             try:
@@ -586,7 +654,7 @@ class OVSQuantumAgent(object):
                                                              self.agent_id)
             except Exception as e:
                 LOG.debug(_("port_removed failed for %(device)s: %(e)s"),
-                          locals())
+                          {'device': device, 'e': e})
                 resync = True
                 continue
             if details['exists']:
@@ -649,7 +717,7 @@ class OVSQuantumAgent(object):
                     sync = self.process_network_ports(port_info)
                     ports = port_info['current']
 
-            except:
+            except Exception:
                 LOG.exception(_("Error in agent event loop"))
                 sync = True
                 tunnel_sync = True

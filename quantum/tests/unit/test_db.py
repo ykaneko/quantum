@@ -1,4 +1,4 @@
-# Copyright (c) 2013 OpenStack, LLC.
+# Copyright (c) 2013 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,17 +15,33 @@
 
 """Test of DB API"""
 
-import unittest2 as unittest
-
+import fixtures
 import mock
+from oslo.config import cfg
 
 import quantum.db.api as db
-from quantum.openstack.common import cfg
+from quantum.tests import base
 
 
-class DBTestCase(unittest.TestCase):
+class DBTestCase(base.BaseTestCase):
+    def setUp(self):
+        super(DBTestCase, self).setUp()
+        cfg.CONF.set_override('sql_max_retries', 1, 'DATABASE')
+        cfg.CONF.set_override('reconnect_interval', 0, 'DATABASE')
+        self.addCleanup(cfg.CONF.reset)
+        self.useFixture(fixtures.MonkeyPatch('quantum.db.api._ENGINE', None))
+
     def test_db_reconnect(self):
-        cfg.CONF.set_override('sql_max_retries', 3, 'DATABASE')
         with mock.patch.object(db, 'register_models') as mock_register:
             mock_register.return_value = False
             db.configure_db()
+
+    def test_warn_when_no_connection(self):
+        with mock.patch.object(db, 'register_models') as mock_register:
+            mock_register.return_value = False
+            with mock.patch.object(db.LOG, 'warn') as mock_log:
+                mock_log.return_value = False
+                db.configure_db()
+                self.assertEqual(mock_log.call_count, 1)
+                args = mock_log.call_args
+                self.assertNotEqual(args.find('sql_connection'), -1)

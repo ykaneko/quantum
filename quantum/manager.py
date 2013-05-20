@@ -16,9 +16,11 @@
 #    under the License.
 # @author: Somik Behera, Nicira Networks, Inc.
 
+from oslo.config import cfg
+
 from quantum.common.exceptions import ClassNotFound
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
+from quantum.openstack.common import lockutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import periodic_task
 from quantum.plugins.common import constants
@@ -58,7 +60,8 @@ class Manager(periodic_task.PeriodicTasks):
 
 
 class QuantumManager(object):
-    """
+    """Quantum's Manager class.
+
     Quantum's Manager class is responsible for parsing a config file and
     instantiating the correct plugin that concretely implement
     quantum_plugin_base class.
@@ -95,12 +98,34 @@ class QuantumManager(object):
 
         # core plugin as a part of plugin collection simplifies
         # checking extensions
-        # TODO (enikanorov): make core plugin the same as
+        # TODO(enikanorov): make core plugin the same as
         # the rest of service plugins
         self.service_plugins = {constants.CORE: self.plugin}
         self._load_service_plugins()
 
+    def _load_services_from_core_plugin(self):
+        """Puts core plugin in service_plugins for supported services."""
+        LOG.debug(_("Loading services supported by the core plugin"))
+
+        # supported service types are derived from supported extensions
+        if not hasattr(self.plugin, "supported_extension_aliases"):
+            return
+        for ext_alias in self.plugin.supported_extension_aliases:
+            if ext_alias in constants.EXT_TO_SERVICE_MAPPING:
+                service_type = constants.EXT_TO_SERVICE_MAPPING[ext_alias]
+                self.service_plugins[service_type] = self.plugin
+                LOG.info(_("Service %s is supported by the core plugin"),
+                         service_type)
+
     def _load_service_plugins(self):
+        """Loads service plugins.
+
+        Starts from the core plugin and checks if it supports
+        advanced services then loads classes provided in configuration.
+        """
+        # load services from the core plugin first
+        self._load_services_from_core_plugin()
+
         plugin_providers = cfg.CONF.service_plugins
         LOG.debug(_("Loading service plugins: %s"), plugin_providers)
         for provider in plugin_providers:
@@ -130,9 +155,16 @@ class QuantumManager(object):
                        "desc": plugin_inst.get_plugin_description()})
 
     @classmethod
-    def get_instance(cls):
+    @lockutils.synchronized("qmlock", "qml-")
+    def _create_instance(cls):
         if cls._instance is None:
             cls._instance = cls()
+
+    @classmethod
+    def get_instance(cls):
+        # double checked locking
+        if cls._instance is None:
+            cls._create_instance()
         return cls._instance
 
     @classmethod

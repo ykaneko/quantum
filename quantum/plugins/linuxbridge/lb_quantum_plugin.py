@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,31 +15,35 @@
 
 import sys
 
+from oslo.config import cfg
+
 from quantum.agent import securitygroups_rpc as sg_rpc
+from quantum.api.rpc.agentnotifiers import dhcp_rpc_agent_api
+from quantum.api.rpc.agentnotifiers import l3_rpc_agent_api
 from quantum.api.v2 import attributes
 from quantum.common import constants as q_const
 from quantum.common import exceptions as q_exc
 from quantum.common import rpc as q_rpc
 from quantum.common import topics
-from quantum.common import utils
+from quantum.db import agents_db
+from quantum.db import agentschedulers_db
 from quantum.db import api as db_api
 from quantum.db import db_base_plugin_v2
 from quantum.db import dhcp_rpc_base
-from quantum.db import l3_db
+from quantum.db import extraroute_db
 from quantum.db import l3_rpc_base
-# NOTE: quota_db cannot be removed, it is for db model
-from quantum.db import quota_db
+from quantum.db import portbindings_db
+from quantum.db import quota_db  # noqa
 from quantum.db import securitygroups_rpc_base as sg_db_rpc
 from quantum.extensions import portbindings
 from quantum.extensions import providernet as provider
-from quantum.extensions import securitygroup as ext_sg
-from quantum.openstack.common import cfg
+from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
 from quantum.openstack.common.rpc import proxy
+from quantum.plugins.common import utils as plugin_utils
 from quantum.plugins.linuxbridge.common import constants
 from quantum.plugins.linuxbridge.db import l2network_db_v2 as db
-from quantum import policy
 
 
 LOG = logging.getLogger(__name__)
@@ -47,12 +51,13 @@ LOG = logging.getLogger(__name__)
 
 class LinuxBridgeRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
                               l3_rpc_base.L3RpcCallbackMixin,
-                              sg_db_rpc.SecurityGroupServerRpcCallbackMixin):
+                              sg_db_rpc.SecurityGroupServerRpcCallbackMixin
+                              ):
 
-    RPC_API_VERSION = '1.1'
-    # Device names start with "tap"
     # history
     #   1.1 Support Security Group RPC
+    RPC_API_VERSION = '1.1'
+    # Device names start with "tap"
     TAP_PREFIX_LEN = 3
 
     def create_rpc_dispatcher(self):
@@ -61,7 +66,8 @@ class LinuxBridgeRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
         If a manager would like to set an rpc API version, or support more than
         one class as the target of rpc messages, override this method.
         '''
-        return q_rpc.PluginRpcDispatcher([self])
+        return q_rpc.PluginRpcDispatcher([self,
+                                          agents_db.AgentExtRpcCallback()])
 
     @classmethod
     def get_port_from_device(cls, device):
@@ -71,21 +77,26 @@ class LinuxBridgeRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
         return port
 
     def get_device_details(self, rpc_context, **kwargs):
-        """Agent requests device details"""
+        """Agent requests device details."""
         agent_id = kwargs.get('agent_id')
         device = kwargs.get('device')
         LOG.debug(_("Device %(device)s details requested from %(agent_id)s"),
-                  locals())
+                  {'device': device, 'agent_id': agent_id})
         port = self.get_port_from_device(device)
         if port:
             binding = db.get_network_binding(db_api.get_session(),
                                              port['network_id'])
+            (network_type,
+             segmentation_id) = constants.interpret_vlan_id(binding.vlan_id)
             entry = {'device': device,
+                     'network_type': network_type,
                      'physical_network': binding.physical_network,
-                     'vlan_id': binding.vlan_id,
+                     'segmentation_id': segmentation_id,
                      'network_id': port['network_id'],
                      'port_id': port['id'],
                      'admin_state_up': port['admin_state_up']}
+            if cfg.CONF.AGENT.rpc_support_old_agents:
+                entry['vlan_id'] = binding.vlan_id
             new_status = (q_const.PORT_STATUS_ACTIVE if port['admin_state_up']
                           else q_const.PORT_STATUS_DOWN)
             if port['status'] != new_status:
@@ -96,12 +107,12 @@ class LinuxBridgeRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
         return entry
 
     def update_device_down(self, rpc_context, **kwargs):
-        """Device no longer exists on agent"""
-        # (TODO) garyk - live migration and port status
+        """Device no longer exists on agent."""
+        # TODO(garyk) - live migration and port status
         agent_id = kwargs.get('agent_id')
         device = kwargs.get('device')
         LOG.debug(_("Device %(device)s no longer exists on %(agent_id)s"),
-                  locals())
+                  {'device': device, 'agent_id': agent_id})
         port = self.get_port_from_device(device)
         if port:
             entry = {'device': device,
@@ -116,11 +127,11 @@ class LinuxBridgeRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
         return entry
 
     def update_device_up(self, rpc_context, **kwargs):
-        """Device is up on agent"""
+        """Device is up on agent."""
         agent_id = kwargs.get('agent_id')
         device = kwargs.get('device')
         LOG.debug(_("Device %(device)s up %(agent_id)s"),
-                  locals())
+                  {'device': device, 'agent_id': agent_id})
         port = self.get_port_from_device(device)
         if port:
             if port['status'] != q_const.PORT_STATUS_ACTIVE:
@@ -159,17 +170,23 @@ class AgentNotifierApi(proxy.RpcProxy,
                          topic=self.topic_network_delete)
 
     def port_update(self, context, port, physical_network, vlan_id):
-        self.fanout_cast(context,
-                         self.make_msg('port_update',
-                                       port=port,
-                                       physical_network=physical_network,
-                                       vlan_id=vlan_id),
+        network_type, segmentation_id = constants.interpret_vlan_id(vlan_id)
+        kwargs = {'port': port,
+                  'network_type': network_type,
+                  'physical_network': physical_network,
+                  'segmentation_id': segmentation_id}
+        if cfg.CONF.AGENT.rpc_support_old_agents:
+            kwargs['vlan_id'] = vlan_id
+        msg = self.make_msg('port_update', **kwargs)
+        self.fanout_cast(context, msg,
                          topic=self.topic_port_update)
 
 
 class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
-                          l3_db.L3_NAT_db_mixin,
-                          sg_db_rpc.SecurityGroupServerRpcMixin):
+                          extraroute_db.ExtraRoute_db_mixin,
+                          sg_db_rpc.SecurityGroupServerRpcMixin,
+                          agentschedulers_db.AgentSchedulerDbMixin,
+                          portbindings_db.PortBindingMixin):
     """Implement the Quantum abstractions using Linux bridging.
 
     A new VLAN is created for each network.  An agent is relied upon
@@ -187,19 +204,30 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
     """
 
     # This attribute specifies whether the plugin supports or not
-    # bulk operations. Name mangling is used in order to ensure it
-    # is qualified by class
+    # bulk/pagination/sorting operations. Name mangling is used in
+    # order to ensure it is qualified by class
     __native_bulk_support = True
+    __native_pagination_support = True
+    __native_sorting_support = True
 
-    supported_extension_aliases = ["provider", "router", "binding", "quotas",
-                                   "security-group"]
+    _supported_extension_aliases = ["provider", "router", "binding", "quotas",
+                                    "security-group", "agent", "extraroute",
+                                    "agent_scheduler"]
 
-    network_view = "extension:provider_network:view"
-    network_set = "extension:provider_network:set"
-    binding_view = "extension:port_binding:view"
-    binding_set = "extension:port_binding:set"
+    @property
+    def supported_extension_aliases(self):
+        if not hasattr(self, '_aliases'):
+            aliases = self._supported_extension_aliases[:]
+            sg_rpc.disable_security_group_extension_if_noop_driver(aliases)
+            self._aliases = aliases
+        return self._aliases
 
     def __init__(self):
+        self.extra_binding_dict = {
+            portbindings.VIF_TYPE: portbindings.VIF_TYPE_BRIDGE,
+            portbindings.CAPABILITIES: {
+                portbindings.CAP_PORT_FILTER:
+                'security-group' in self.supported_extension_aliases}}
         db.initialize()
         self._parse_network_vlan_ranges()
         db.sync_network_states(self.network_vlan_ranges)
@@ -212,6 +240,10 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
                       self.tenant_network_type)
             sys.exit(1)
         self._setup_rpc()
+        self.network_scheduler = importutils.import_object(
+            cfg.CONF.network_scheduler_driver)
+        self.router_scheduler = importutils.import_object(
+            cfg.CONF.router_scheduler_driver)
         LOG.debug(_("Linux Bridge Plugin initialization complete"))
 
     def _setup_rpc(self):
@@ -225,31 +257,17 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         # Consume from all consumers in a thread
         self.conn.consume_in_thread()
         self.notifier = AgentNotifierApi(topics.AGENT)
+        self.dhcp_agent_notifier = dhcp_rpc_agent_api.DhcpAgentNotifyAPI()
+        self.l3_agent_notifier = l3_rpc_agent_api.L3AgentNotify
 
     def _parse_network_vlan_ranges(self):
-        self.network_vlan_ranges = {}
-        for entry in cfg.CONF.VLANS.network_vlan_ranges:
-            if ':' in entry:
-                try:
-                    physical_network, vlan_min, vlan_max = entry.split(':')
-                    self._add_network_vlan_range(physical_network,
-                                                 int(vlan_min),
-                                                 int(vlan_max))
-                except ValueError as ex:
-                    LOG.error(_("Invalid network VLAN range: "
-                                "'%(entry)s' - %(ex)s. "
-                                "Service terminated!"),
-                              locals())
-                    sys.exit(1)
-            else:
-                self._add_network(entry)
-        LOG.debug(_("Network VLAN ranges: %s"), self.network_vlan_ranges)
-
-    def _check_view_auth(self, context, resource, action):
-        return policy.check(context, action, resource)
-
-    def _enforce_set_auth(self, context, resource, action):
-        policy.enforce(context, action, resource)
+        try:
+            self.network_vlan_ranges = plugin_utils.parse_network_vlan_ranges(
+                cfg.CONF.VLANS.network_vlan_ranges)
+        except Exception as ex:
+            LOG.error(_("%s. Agent terminated!"), ex)
+            sys.exit(1)
+        LOG.info(_("Network VLAN ranges: %s"), self.network_vlan_ranges)
 
     def _add_network_vlan_range(self, physical_network, vlan_min, vlan_max):
         self._add_network(physical_network)
@@ -259,24 +277,20 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         if physical_network not in self.network_vlan_ranges:
             self.network_vlan_ranges[physical_network] = []
 
-    # REVISIT(rkukura) Use core mechanism for attribute authorization
-    # when available.
-
     def _extend_network_dict_provider(self, context, network):
-        if self._check_view_auth(context, network, self.network_view):
-            binding = db.get_network_binding(context.session, network['id'])
-            if binding.vlan_id == constants.FLAT_VLAN_ID:
-                network[provider.NETWORK_TYPE] = constants.TYPE_FLAT
-                network[provider.PHYSICAL_NETWORK] = binding.physical_network
-                network[provider.SEGMENTATION_ID] = None
-            elif binding.vlan_id == constants.LOCAL_VLAN_ID:
-                network[provider.NETWORK_TYPE] = constants.TYPE_LOCAL
-                network[provider.PHYSICAL_NETWORK] = None
-                network[provider.SEGMENTATION_ID] = None
-            else:
-                network[provider.NETWORK_TYPE] = constants.TYPE_VLAN
-                network[provider.PHYSICAL_NETWORK] = binding.physical_network
-                network[provider.SEGMENTATION_ID] = binding.vlan_id
+        binding = db.get_network_binding(context.session, network['id'])
+        if binding.vlan_id == constants.FLAT_VLAN_ID:
+            network[provider.NETWORK_TYPE] = constants.TYPE_FLAT
+            network[provider.PHYSICAL_NETWORK] = binding.physical_network
+            network[provider.SEGMENTATION_ID] = None
+        elif binding.vlan_id == constants.LOCAL_VLAN_ID:
+            network[provider.NETWORK_TYPE] = constants.TYPE_LOCAL
+            network[provider.PHYSICAL_NETWORK] = None
+            network[provider.SEGMENTATION_ID] = None
+        else:
+            network[provider.NETWORK_TYPE] = constants.TYPE_VLAN
+            network[provider.PHYSICAL_NETWORK] = binding.physical_network
+            network[provider.SEGMENTATION_ID] = binding.vlan_id
 
     def _process_provider_create(self, context, attrs):
         network_type = attrs.get(provider.NETWORK_TYPE)
@@ -290,9 +304,6 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         if not (network_type_set or physical_network_set or
                 segmentation_id_set):
             return (None, None, None)
-
-        # Authorize before exposing plugin details to client
-        self._enforce_set_auth(context, attrs, self.network_set)
 
         if not network_type_set:
             msg = _("provider:network_type required")
@@ -354,9 +365,6 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
         if not (network_type_set or physical_network_set or
                 segmentation_id_set):
             return
-
-        # Authorize before exposing plugin details to client
-        self._enforce_set_auth(context, attrs, self.network_set)
 
         msg = _("Plugin does not support updating provider attributes")
         raise q_exc.InvalidInput(error_message=msg)
@@ -431,53 +439,22 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
             self._extend_network_dict_l3(context, net)
         return self._fields(net, fields)
 
-    def get_networks(self, context, filters=None, fields=None):
+    def get_networks(self, context, filters=None, fields=None,
+                     sorts=None, limit=None, marker=None, page_reverse=False):
         session = context.session
         with session.begin(subtransactions=True):
-            nets = super(LinuxBridgePluginV2, self).get_networks(context,
-                                                                 filters,
-                                                                 None)
+            nets = super(LinuxBridgePluginV2,
+                         self).get_networks(context, filters, None, sorts,
+                                            limit, marker, page_reverse)
             for net in nets:
                 self._extend_network_dict_provider(context, net)
                 self._extend_network_dict_l3(context, net)
 
-            # TODO(rkukura): Filter on extended provider attributes.
-            nets = self._filter_nets_l3(context, nets, filters)
-
         return [self._fields(net, fields) for net in nets]
-
-    def _extend_port_dict_binding(self, context, port):
-        if self._check_view_auth(context, port, self.binding_view):
-            port[portbindings.VIF_TYPE] = portbindings.VIF_TYPE_BRIDGE
-            port[portbindings.CAPABILITIES] = {
-                portbindings.CAP_PORT_FILTER:
-                'security-group' in self.supported_extension_aliases}
-        return port
-
-    def get_port(self, context, id, fields=None):
-        with context.session.begin(subtransactions=True):
-            port = super(LinuxBridgePluginV2, self).get_port(context,
-                                                             id,
-                                                             fields)
-            self._extend_port_dict_security_group(context, port)
-        self._extend_port_dict_binding(context, port),
-        return self._fields(port, fields)
-
-    def get_ports(self, context, filters=None, fields=None):
-        res_ports = []
-        with context.session.begin(subtransactions=True):
-            ports = super(LinuxBridgePluginV2, self).get_ports(context,
-                                                               filters,
-                                                               fields)
-            #TODO(nati) filter by security group
-            for port in ports:
-                self._extend_port_dict_security_group(context, port)
-                self._extend_port_dict_binding(context, port)
-                res_ports.append(self._fields(port, fields))
-        return res_ports
 
     def create_port(self, context, port):
         session = context.session
+        port_data = port['port']
         with session.begin(subtransactions=True):
             self._ensure_default_security_group_on_port(context, port)
             sgids = self._get_security_groups_on_port(context, port)
@@ -486,50 +463,37 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
 
             port = super(LinuxBridgePluginV2,
                          self).create_port(context, port)
+            self._process_portbindings_create_and_update(context,
+                                                         port_data,
+                                                         port)
             self._process_port_create_security_group(
-                context, port['id'], sgids)
-            self._extend_port_dict_security_group(context, port)
-        if port['device_owner'] == q_const.DEVICE_OWNER_DHCP:
-            self.notifier.security_groups_provider_updated(context)
-        else:
-            self.notifier.security_groups_member_updated(
-                context, port.get(ext_sg.SECURITYGROUPS))
-        return self._extend_port_dict_binding(context, port)
+                context, port, sgids)
+        self.notify_security_groups_member_updated(context, port)
+        return port
 
     def update_port(self, context, id, port):
         original_port = self.get_port(context, id)
         session = context.session
-        port_updated = False
+        need_port_update_notify = False
+
         with session.begin(subtransactions=True):
-            # delete the port binding and read it with the new rules
-            if ext_sg.SECURITYGROUPS in port['port']:
-                port['port'][ext_sg.SECURITYGROUPS] = (
-                    self._get_security_groups_on_port(context, port))
-                self._delete_port_security_group_bindings(context, id)
-                self._process_port_create_security_group(
-                    context,
-                    id,
-                    port['port'][ext_sg.SECURITYGROUPS])
-                port_updated = True
-
-            port = super(LinuxBridgePluginV2, self).update_port(
+            updated_port = super(LinuxBridgePluginV2, self).update_port(
                 context, id, port)
-            self._extend_port_dict_security_group(context, port)
+            self._process_portbindings_create_and_update(context,
+                                                         port['port'],
+                                                         updated_port)
+            need_port_update_notify = self.update_security_group_on_port(
+                context, id, port, original_port, updated_port)
 
-        if original_port['admin_state_up'] != port['admin_state_up']:
-            port_updated = True
+        need_port_update_notify |= self.is_security_group_member_updated(
+            context, original_port, updated_port)
 
-        if (original_port['fixed_ips'] != port['fixed_ips'] or
-            not utils.compare_elements(
-                original_port.get(ext_sg.SECURITYGROUPS),
-                port.get(ext_sg.SECURITYGROUPS))):
-            self.notifier.security_groups_member_updated(
-                context, port.get(ext_sg.SECURITYGROUPS))
+        if original_port['admin_state_up'] != updated_port['admin_state_up']:
+            need_port_update_notify = True
 
-        if port_updated:
-            self._notify_port_updated(context, port)
-
-        return self._extend_port_dict_binding(context, port)
+        if need_port_update_notify:
+            self._notify_port_updated(context, updated_port)
+        return updated_port
 
     def delete_port(self, context, id, l3_port_check=True):
 
@@ -544,8 +508,8 @@ class LinuxBridgePluginV2(db_base_plugin_v2.QuantumDbPluginV2,
             port = self.get_port(context, id)
             self._delete_port_security_group_bindings(context, id)
             super(LinuxBridgePluginV2, self).delete_port(context, id)
-            self.notifier.security_groups_member_updated(
-                context, port.get(ext_sg.SECURITYGROUPS))
+
+        self.notify_security_groups_member_updated(context, port)
 
     def _notify_port_updated(self, context, port):
         binding = db.get_network_binding(context.session,

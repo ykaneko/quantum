@@ -19,32 +19,13 @@ from contextlib import nested
 import operator
 
 from quantum.db import api as db
-from quantum.openstack.common import cfg
-# NOTE: this import is needed for correct plugin code work
-from quantum.plugins.ryu.common import config
+from quantum.plugins.ryu.common import config  # noqa
 from quantum.plugins.ryu.db import api_v2 as db_api_v2
-from quantum.plugins.ryu.db import models_v2 as ryu_models_v2
-from quantum.plugins.ryu import ofp_service_type
+from quantum.plugins.ryu.db import models_v2 as ryu_models_v2  # noqa
 from quantum.tests.unit import test_db_plugin as test_plugin
 
 
 class RyuDBTest(test_plugin.QuantumDbPluginV2TestCase):
-    def setUp(self):
-        super(RyuDBTest, self).setUp()
-        self.hosts = [(cfg.CONF.OVS.openflow_controller,
-                       ofp_service_type.CONTROLLER),
-                      (cfg.CONF.OVS.openflow_rest_api,
-                       ofp_service_type.REST_API)]
-        db_api_v2.set_ofp_servers(self.hosts)
-
-    def test_ofp_server(self):
-        session = db.get_session()
-        servers = session.query(ryu_models_v2.OFPServer).all()
-        print servers
-        self.assertEqual(len(servers), 2)
-        for s in servers:
-            self.assertTrue((s.address, s.host_type) in self.hosts)
-
     @staticmethod
     def _tunnel_key_sort(key_list):
         key_list.sort(key=operator.attrgetter('tunnel_key'))

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,13 +15,32 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import unittest2
+import testtools
 
 from quantum.api.v2 import attributes
 from quantum.common import exceptions as q_exc
+from quantum.tests import base
 
 
-class TestAttributes(unittest2.TestCase):
+class TestAttributes(base.BaseTestCase):
+
+    def _construct_dict_and_constraints(self):
+        """Constructs a test dictionary and a definition of constraints.
+        :return: A (dictionary, constraint) tuple
+        """
+        constraints = {'key1': {'type:values': ['val1', 'val2'],
+                                'required': True},
+                       'key2': {'type:string': None,
+                                'required': False},
+                       'key3': {'type:dict': {'k4': {'type:string': None,
+                                                     'required': True}},
+                                'required': True}}
+
+        dictionary = {'key1': 'val1',
+                      'key2': 'a string value',
+                      'key3': {'k4': 'a string value'}}
+
+        return dictionary, constraints
 
     def test_is_attr_set(self):
         data = attributes.ATTR_NOT_SPECIFIED
@@ -73,6 +92,19 @@ class TestAttributes(unittest2.TestCase):
         msg = attributes._validate_string("123456789", None)
         self.assertIsNone(msg)
 
+    def test_validate_no_whitespace(self):
+        data = 'no_white_space'
+        result = attributes._validate_no_whitespace(data)
+        self.assertEqual(result, data)
+
+        self.assertRaises(q_exc.InvalidInput,
+                          attributes._validate_no_whitespace,
+                          'i have whitespace')
+
+        self.assertRaises(q_exc.InvalidInput,
+                          attributes._validate_no_whitespace,
+                          'i\thave\twhitespace')
+
     def test_validate_range(self):
         msg = attributes._validate_range(1, [1, 9])
         self.assertIsNone(msg)
@@ -116,6 +148,18 @@ class TestAttributes(unittest2.TestCase):
         msg = attributes._validate_ip_address(ip_addr)
         self.assertEqual(msg, "'%s' is not a valid IP address" % ip_addr)
 
+        ip_addr = '1.1.1.1 has whitespace'
+        msg = attributes._validate_ip_address(ip_addr)
+        self.assertEqual(msg, "'%s' is not a valid IP address" % ip_addr)
+
+        ip_addr = '111.1.1.1\twhitespace'
+        msg = attributes._validate_ip_address(ip_addr)
+        self.assertEqual(msg, "'%s' is not a valid IP address" % ip_addr)
+
+        ip_addr = '111.1.1.1\nwhitespace'
+        msg = attributes._validate_ip_address(ip_addr)
+        self.assertEqual(msg, "'%s' is not a valid IP address" % ip_addr)
+
     def test_validate_ip_pools(self):
         pools = [[{'end': '10.0.0.254'}],
                  [{'start': '10.0.0.254'}],
@@ -139,17 +183,32 @@ class TestAttributes(unittest2.TestCase):
             self.assertIsNone(msg)
 
     def test_validate_fixed_ips(self):
-        fixed_ips = [[{'subnet_id': '00000000-ffff-ffff-ffff-000000000000',
+        fixed_ips = [
+            {'data': [{'subnet_id': '00000000-ffff-ffff-ffff-000000000000',
                        'ip_address': '1111.1.1.1'}],
-                     [{'subnet_id': 'invalid'}],
-                     None,
-                     [{'subnet_id': '00000000-0fff-ffff-ffff-000000000000',
+             'error_msg': "'1111.1.1.1' is not a valid IP address"},
+            {'data': [{'subnet_id': 'invalid',
+                       'ip_address': '1.1.1.1'}],
+             'error_msg': "'invalid' is not a valid UUID"},
+            {'data': None,
+             'error_msg': "Invalid data format for fixed IP: 'None'"},
+            {'data': "1.1.1.1",
+             'error_msg': "Invalid data format for fixed IP: '1.1.1.1'"},
+            {'data': ['00000000-ffff-ffff-ffff-000000000000', '1.1.1.1'],
+             'error_msg': "Invalid data format for fixed IP: "
+                          "'00000000-ffff-ffff-ffff-000000000000'"},
+            {'data': [['00000000-ffff-ffff-ffff-000000000000', '1.1.1.1']],
+             'error_msg': "Invalid data format for fixed IP: "
+                          "'['00000000-ffff-ffff-ffff-000000000000', "
+                          "'1.1.1.1']'"},
+            {'data': [{'subnet_id': '00000000-0fff-ffff-ffff-000000000000',
                        'ip_address': '1.1.1.1'},
                       {'subnet_id': '00000000-ffff-ffff-ffff-000000000000',
-                       'ip_address': '1.1.1.1'}]]
+                       'ip_address': '1.1.1.1'}],
+             'error_msg': "Duplicate IP address '1.1.1.1'"}]
         for fixed in fixed_ips:
-            msg = attributes._validate_fixed_ips(fixed)
-            self.assertIsNotNone(msg)
+            msg = attributes._validate_fixed_ips(fixed['data'])
+            self.assertEqual(msg, fixed['error_msg'])
 
         fixed_ips = [[{'subnet_id': '00000000-ffff-ffff-ffff-000000000000',
                        'ip_address': '1.1.1.1'}],
@@ -381,7 +440,7 @@ class TestAttributes(unittest2.TestCase):
         for uuid in uuids:
             msg = attributes._validate_uuid_list(uuid)
             error = "'%s' is not a list" % uuid
-            self.assertEquals(msg, error)
+            self.assertEqual(msg, error)
 
         # check invalid uuid in a list
         invalid_uuid_lists = [[None],
@@ -395,15 +454,16 @@ class TestAttributes(unittest2.TestCase):
         for uuid_list in invalid_uuid_lists:
             msg = attributes._validate_uuid_list(uuid_list)
             error = "'%s' is not a valid UUID" % uuid_list[0]
-            self.assertEquals(msg, error)
+            self.assertEqual(msg, error)
 
         # check duplicate items in a list
         duplicate_uuids = ['e5069610-744b-42a7-8bd8-ceac1a229cd4',
                            'f3eeab00-8367-4524-b662-55e64d4cacb5',
                            'e5069610-744b-42a7-8bd8-ceac1a229cd4']
         msg = attributes._validate_uuid_list(duplicate_uuids)
-        error = "Duplicate items in the list: %s" % ', '.join(duplicate_uuids)
-        self.assertEquals(msg, error)
+        error = ("Duplicate items in the list: "
+                 "'%s'" % ', '.join(duplicate_uuids))
+        self.assertEqual(msg, error)
 
         # check valid uuid lists
         valid_uuid_lists = [['e5069610-744b-42a7-8bd8-ceac1a229cd4'],
@@ -412,30 +472,98 @@ class TestAttributes(unittest2.TestCase):
                              'f3eeab00-8367-4524-b662-55e64d4cacb5']]
         for uuid_list in valid_uuid_lists:
             msg = attributes._validate_uuid_list(uuid_list)
-            self.assertEquals(msg, None)
+            self.assertEqual(msg, None)
 
-    def test_validate_dict(self):
+    def test_validate_dict_type(self):
         for value in (None, True, '1', []):
-            self.assertEquals(attributes._validate_dict(value),
-                              "'%s' is not a dictionary" % value)
+            self.assertEqual(attributes._validate_dict(value),
+                             "'%s' is not a dictionary" % value)
 
+    def test_validate_dict_without_constraints(self):
         msg = attributes._validate_dict({})
         self.assertIsNone(msg)
 
+        # Validate a dictionary without constraints.
         msg = attributes._validate_dict({'key': 'value'})
         self.assertIsNone(msg)
 
+    def test_validate_a_valid_dict_with_constraints(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertIsNone(msg, 'Validation of a valid dictionary failed.')
+
+    def test_validate_dict_with_invalid_validator(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        constraints['key1'] = {'type:unsupported': None, 'required': True}
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertEqual(msg, "Validator 'type:unsupported' does not exist.")
+
+    def test_validate_dict_not_required_keys(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        del dictionary['key2']
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertIsNone(msg, 'Field that was not required by the specs was'
+                               'required by the validator.')
+
+    def test_validate_dict_required_keys(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        del dictionary['key1']
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertIn('Expected keys:', msg)
+
+    def test_validate_dict_wrong_values(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        dictionary['key1'] = 'UNSUPPORTED'
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertIsNotNone(msg)
+
+    def test_subdictionary(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        del dictionary['key3']['k4']
+        dictionary['key3']['k5'] = 'a string value'
+        msg = attributes._validate_dict(dictionary, constraints)
+        self.assertIn('Expected keys:', msg)
+
+    def test_validate_dict_or_none(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        # Check whether None is a valid value.
+        msg = attributes._validate_dict_or_none(None, constraints)
+        self.assertIsNone(msg, 'Validation of a None dictionary failed.')
+
+        # Check validation of a regular dictionary.
+        msg = attributes._validate_dict_or_none(dictionary, constraints)
+        self.assertIsNone(msg, 'Validation of a valid dictionary failed.')
+
+    def test_validate_dict_or_empty(self):
+        dictionary, constraints = self._construct_dict_and_constraints()
+
+        # Check whether an empty dictionary is valid.
+        msg = attributes._validate_dict_or_empty({}, constraints)
+        self.assertIsNone(msg, 'Validation of a None dictionary failed.')
+
+        # Check validation of a regular dictionary.
+        msg = attributes._validate_dict_or_none(dictionary, constraints)
+        self.assertIsNone(msg, 'Validation of a valid dictionary failed.')
+        self.assertIsNone(msg, 'Validation of a valid dictionary failed.')
+
     def test_validate_non_negative(self):
         for value in (-1, '-2'):
-            self.assertEquals(attributes._validate_non_negative(value),
-                              "'%s' should be non-negative" % value)
+            self.assertEqual(attributes._validate_non_negative(value),
+                             "'%s' should be non-negative" % value)
 
         for value in (0, 1, '2', True, False):
             msg = attributes._validate_non_negative(value)
             self.assertIsNone(msg)
 
 
-class TestConvertToBoolean(unittest2.TestCase):
+class TestConvertToBoolean(base.BaseTestCase):
 
     def test_convert_to_boolean_bool(self):
         self.assertIs(attributes.convert_to_boolean(True), True)
@@ -460,7 +588,7 @@ class TestConvertToBoolean(unittest2.TestCase):
                           '7')
 
 
-class TestConvertToInt(unittest2.TestCase):
+class TestConvertToInt(base.BaseTestCase):
 
     def test_convert_to_int_int(self):
         self.assertEqual(attributes.convert_to_int(-1), -1)
@@ -483,6 +611,10 @@ class TestConvertToInt(unittest2.TestCase):
         self.assertEqual(
             [], attributes.convert_none_to_empty_list(None))
 
+    def test_convert_none_to_empty_dict(self):
+        self.assertEqual(
+            {}, attributes.convert_none_to_empty_dict(None))
+
     def test_convert_none_to_empty_list_value(self):
         values = ['1', 3, [], [1], {}, {'a': 3}]
         for value in values:
@@ -490,7 +622,7 @@ class TestConvertToInt(unittest2.TestCase):
                 value, attributes.convert_none_to_empty_list(value))
 
 
-class TestConvertKvp(unittest2.TestCase):
+class TestConvertKvp(base.BaseTestCase):
 
     def test_convert_kvp_list_to_dict_succeeds_for_missing_values(self):
         result = attributes.convert_kvp_list_to_dict(['True'])
@@ -506,11 +638,11 @@ class TestConvertKvp(unittest2.TestCase):
         self.assertEqual({'a': ['b'], 'c': ['d']}, result)
 
     def test_convert_kvp_str_to_list_fails_for_missing_key(self):
-        with self.assertRaises(q_exc.InvalidInput):
+        with testtools.ExpectedException(q_exc.InvalidInput):
             attributes.convert_kvp_str_to_list('=a')
 
     def test_convert_kvp_str_to_list_fails_for_missing_equals(self):
-        with self.assertRaises(q_exc.InvalidInput):
+        with testtools.ExpectedException(q_exc.InvalidInput):
             attributes.convert_kvp_str_to_list('a')
 
     def test_convert_kvp_str_to_list_succeeds_for_one_equals(self):
@@ -522,20 +654,20 @@ class TestConvertKvp(unittest2.TestCase):
         self.assertEqual(['a', 'a=a'], result)
 
 
-class TestConvertToList(unittest2.TestCase):
+class TestConvertToList(base.BaseTestCase):
 
     def test_convert_to_empty_list(self):
         for item in (None, [], (), {}):
-            self.assertEquals(attributes.convert_to_list(item), [])
+            self.assertEqual(attributes.convert_to_list(item), [])
 
     def test_convert_to_list_string(self):
         for item in ('', 'foo'):
-            self.assertEquals(attributes.convert_to_list(item), [item])
+            self.assertEqual(attributes.convert_to_list(item), [item])
 
     def test_convert_to_list_iterable(self):
         for item in ([None], [1, 2, 3], (1, 2, 3), set([1, 2, 3]), ['foo']):
-            self.assertEquals(attributes.convert_to_list(item), list(item))
+            self.assertEqual(attributes.convert_to_list(item), list(item))
 
     def test_convert_to_list_non_iterable(self):
         for item in (True, False, 1, 1.2, object()):
-            self.assertEquals(attributes.convert_to_list(item), [item])
+            self.assertEqual(attributes.convert_to_list(item), [item])

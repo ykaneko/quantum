@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,19 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-
 import mock
 
 from quantum.db import dhcp_rpc_base
+from quantum.tests import base
 
 
-class TestDhcpRpcCallackMixin(unittest.TestCase):
+class TestDhcpRpcCallackMixin(base.BaseTestCase):
 
     def setUp(self):
+        super(TestDhcpRpcCallackMixin, self).setUp()
         self.plugin_p = mock.patch('quantum.manager.QuantumManager.get_plugin')
         get_plugin = self.plugin_p.start()
-        self.plugin = mock.Mock()
+        self.plugin = mock.MagicMock()
         get_plugin.return_value = self.plugin
         self.callbacks = dhcp_rpc_base.DhcpRpcCallbackMixin()
         self.log_p = mock.patch('quantum.db.dhcp_rpc_base.LOG')
@@ -34,6 +34,7 @@ class TestDhcpRpcCallackMixin(unittest.TestCase):
     def tearDown(self):
         self.log_p.stop()
         self.plugin_p.stop()
+        super(TestDhcpRpcCallackMixin, self).tearDown()
 
     def test_get_active_networks(self):
         plugin_retval = [dict(id='a'), dict(id='b')]
@@ -96,8 +97,8 @@ class TestDhcpRpcCallackMixin(unittest.TestCase):
         expectations = [
             mock.call.update_port(mock.ANY, 'port_id', dict(port=port_retval))]
 
-        retval = self._test_get_dhcp_port_helper(port_retval, expectations,
-                                                 update_port=port_retval)
+        self._test_get_dhcp_port_helper(port_retval, expectations,
+                                        update_port=port_retval)
         self.assertEqual(len(self.log.mock_calls), 1)
 
     def test_get_dhcp_port_create_new(self):

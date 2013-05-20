@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack LLC.
+# Copyright (c) 2012 OpenStack Foundation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -25,12 +25,13 @@ LOG = logging.getLogger(__name__)
 
 class PluginRpcDispatcher(dispatcher.RpcDispatcher):
     """This class is used to convert RPC common context into
-    Quantum Context."""
+    Quantum Context.
+    """
 
     def __init__(self, callbacks):
         super(PluginRpcDispatcher, self).__init__(callbacks)
 
-    def dispatch(self, rpc_ctxt, version, method, **kwargs):
+    def dispatch(self, rpc_ctxt, version, method, namespace, **kwargs):
         rpc_ctxt_dict = rpc_ctxt.to_dict()
         user_id = rpc_ctxt_dict.pop('user_id', None)
         if not user_id:
@@ -40,4 +41,4 @@ class PluginRpcDispatcher(dispatcher.RpcDispatcher):
             tenant_id = rpc_ctxt_dict.pop('project_id', None)
         quantum_ctxt = context.Context(user_id, tenant_id, **rpc_ctxt_dict)
         return super(PluginRpcDispatcher, self).dispatch(
-            quantum_ctxt, version, method, **kwargs)
+            quantum_ctxt, version, method, namespace, **kwargs)

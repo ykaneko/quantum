@@ -14,14 +14,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
+
+from quantum.agent.common import config
 
 
 ovs_opts = [
     cfg.StrOpt('integration_bridge', default='br-int',
                help=_("Integration bridge to use")),
-    cfg.StrOpt('openflow_controller', default='127.0.0.1:6633',
-               help=_("OpenFlow controller to connect to")),
     cfg.StrOpt('openflow_rest_api', default='127.0.0.1:8080',
                help=_("OpenFlow REST API location")),
     cfg.IntOpt('tunnel_key_min', default=1,
@@ -41,10 +41,12 @@ ovs_opts = [
 ]
 
 agent_opts = [
-    cfg.StrOpt('root_helper', default='sudo',
-               help=_("Root helper application.")),
+    cfg.IntOpt('polling_interval', default=2,
+               help=_("The number of seconds the agent will wait between "
+                      "polling for local device changes.")),
 ]
 
 
 cfg.CONF.register_opts(ovs_opts, "OVS")
 cfg.CONF.register_opts(agent_opts, "AGENT")
+config.register_root_helper(cfg.CONF)

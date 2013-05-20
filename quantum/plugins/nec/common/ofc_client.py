@@ -27,7 +27,7 @@ LOG = logging.getLogger(__name__)
 
 
 class OFCClient(object):
-    """A HTTP/HTTPS client for OFC Drivers"""
+    """A HTTP/HTTPS client for OFC Drivers."""
 
     def __init__(self, host="127.0.0.1", port=8888, use_ssl=False,
                  key_file=None, cert_file=None):
@@ -47,16 +47,17 @@ class OFCClient(object):
         self.connection = None
 
     def get_connection_type(self):
-        """Returns the proper connection type"""
+        """Returns the proper connection type."""
         if self.use_ssl:
             return httplib.HTTPSConnection
         else:
             return httplib.HTTPConnection
 
     def do_request(self, method, action, body=None):
-        LOG.debug(_("Client request: %(method)s %(action)s [%(body)s]"),
-                  locals())
-
+        LOG.debug(_("Client request: %(host)s:%(port)s "
+                    "%(method)s %(action)s [%(body)s]"),
+                  {'host': self.host, 'port': self.port,
+                   'method': method, 'action': action, 'body': body})
         if type(body) is dict:
             body = json.dumps(body)
         try:
@@ -84,7 +85,7 @@ class OFCClient(object):
             else:
                 reason = _("An operation on OFC is failed.")
                 raise nexc.OFCException(reason=reason)
-        except (socket.error, IOError), e:
+        except (socket.error, IOError) as e:
             reason = _("Failed to connect OFC : %s") % str(e)
             LOG.error(reason)
             raise nexc.OFCException(reason=reason)

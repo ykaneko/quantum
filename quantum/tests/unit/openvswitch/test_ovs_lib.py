@@ -16,20 +16,21 @@
 # @author: Dan Wendlandt, Nicira, Inc.
 
 import mox
-import unittest2 as unittest
 
 from quantum.agent.linux import ovs_lib, utils
 from quantum.openstack.common import uuidutils
+from quantum.tests import base
 
 
-class OVS_Lib_Test(unittest.TestCase):
-    """
-    A test suite to excercise the OVS libraries shared by Quantum agents.
+class OVS_Lib_Test(base.BaseTestCase):
+    """A test suite to excercise the OVS libraries shared by Quantum agents.
+
     Note: these tests do not actually execute ovs-* utilities, and thus
     can run on any system.  That does, however, limit their scope.
     """
 
     def setUp(self):
+        super(OVS_Lib_Test, self).setUp()
         self.BR_NAME = "br-int"
         self.TO = "--timeout=2"
 
@@ -37,12 +38,10 @@ class OVS_Lib_Test(unittest.TestCase):
         self.root_helper = 'sudo'
         self.br = ovs_lib.OVSBridge(self.BR_NAME, self.root_helper)
         self.mox.StubOutWithMock(utils, "execute")
-
-    def tearDown(self):
-        self.mox.UnsetStubs()
+        self.addCleanup(self.mox.UnsetStubs)
 
     def test_vifport(self):
-        """create and stringify vif port, confirm no exceptions"""
+        """Create and stringify vif port, confirm no exceptions."""
         self.mox.ReplayAll()
 
         pname = "vif1.0"
@@ -59,7 +58,7 @@ class OVS_Lib_Test(unittest.TestCase):
         self.assertEqual(port.switch.br_name, self.BR_NAME)
 
         # test __str__
-        foo = str(port)
+        str(port)
 
         self.mox.VerifyAll()
 
@@ -303,9 +302,8 @@ class OVS_Lib_Test(unittest.TestCase):
         self.assertEqual(ovs_lib.get_bridge_for_iface(root_helper, iface), br)
         self.mox.VerifyAll()
 
-    def test_iface_to_br(self):
+    def test_iface_to_br_handles_ovs_vsctl_exception(self):
         iface = 'tap0'
-        br = 'br-int'
         root_helper = 'sudo'
         utils.execute(["ovs-vsctl", self.TO, "iface-to-br", iface],
                       root_helper=root_helper).AndRaise(Exception)
@@ -328,7 +326,6 @@ class OVS_Lib_Test(unittest.TestCase):
                                 'ca:fe:de:ad:be:ef', 'br')
         port2 = ovs_lib.VifPort('tap5678', 2, uuidutils.generate_uuid(),
                                 'ca:ee:de:ad:be:ef', 'br')
-        ports = [port1, port2]
         self.mox.StubOutWithMock(self.br, 'get_vif_ports')
         self.br.get_vif_ports().AndReturn([port1, port2])
         self.mox.StubOutWithMock(self.br, 'delete_port')

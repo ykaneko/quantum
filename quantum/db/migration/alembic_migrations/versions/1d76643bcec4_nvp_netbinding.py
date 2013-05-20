@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright 2013 OpenStack LLC
+# Copyright 2013 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -18,7 +18,7 @@
 """nvp_netbinding
 
 Revision ID: 1d76643bcec4
-Revises: 48b6f43f7471
+Revises: 3cb5d900c5de
 Create Date: 2013-01-15 07:36:10.024346
 
 """
@@ -30,7 +30,7 @@ down_revision = '3cb5d900c5de'
 # Change to ['*'] if this migration applies to all plugins
 
 migration_for_plugins = [
-    'quantum.plugins.nicira.nicira_nvp_plugin.QuantumPlugin.NvpPluginV2'
+    'quantum.plugins.nicira.QuantumPlugin.NvpPluginV2'
 ]
 
 from alembic import op
