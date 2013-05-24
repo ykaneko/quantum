@@ -85,9 +85,16 @@ class QuantumFakeVMAgentRyu(
         ovs_br.run_vsctl(['--may-exist', 'add-br', ovs_bridge_name])
         return ovs_br
 
+    def _bridge_exists(self, bridge_name):
+        try:
+            self._execute(['brctl', 'show', bridge_name])
+        except RuntimeError:
+            return False
+        return True
+
     def _ensure_bridge(self, bridge_name):
         br_name = self.conf.FAKEVM.vir_bridge
-        if self._bridge_exists(br_name):
+        if not self._bridge_exists(br_name):
             if self._execute(['brctl', 'addbr', br_name]):
                 raise RuntimeError('brctl addbr %s failed' % br_name)
             if self._execute(['brctl', 'setfd', br_name, str(0)]):
