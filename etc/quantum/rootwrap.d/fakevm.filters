@@ -24,3 +24,18 @@ ovs-vsctl: CommandFilter, /bin/ovs-vsctl, root
 ovs-vsctl_usr: CommandFilter, /usr/bin/ovs-vsctl, root
 ovs-vsctl_sbin: CommandFilter, /sbin/ovs-vsctl, root
 ovs-vsctl_sbin_usr: CommandFilter, /usr/sbin/ovs-vsctl, root
+
+ping: CommandFilter, /bin/ping, root
+ping_usr: CommandFilter, /usr/bin/ping, root
+ping_sbin: CommandFilter, /sbin/ping, root
+ping_sbin_usr: CommandFilter, /usr/sbin/ping, root
+
+dhclient: CommandFilter, /bin/dhclient, root
+dhclient_usr: CommandFilter, /usr/bin/dhclient, root
+dhclient_sbin: CommandFilter, /sbin/dhclient, root
+dhclient_sbin_usr: CommandFilter, /usr/sbin/dhclient, root
+
+ifconfig: CommandFilter, /bin/ifconfig, root
+ifconfig_usr: CommandFilter, /usr/bin/ifconfig, root
+ifconfig_sbin: CommandFilter, /sbin/ifconfig, root
+ifconfig_sbin_usr: CommandFilter, /usr/sbin/ifconfig, root
