@@ -19,6 +19,8 @@
 import logging as std_logging
 import sys
 
+from oslo.config import cfg
+
 from quantumclient.common import exceptions as exc
 from quantumclient.common import utils
 from quantumclient.shell import env, QuantumShell, QUANTUM_API_VERSION
@@ -26,7 +28,6 @@ from quantumclient.shell import env, QuantumShell, QUANTUM_API_VERSION
 from quantum.agent.common import config
 from quantum.fakevm import rpc as fakevm_rpc
 from quantum.common import topics
-from quantum.openstack.common import cfg
 from quantum.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)

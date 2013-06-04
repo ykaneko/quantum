@@ -18,10 +18,11 @@
 
 import re
 
+from oslo.config import cfg
+
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.common import config
-from quantum.openstack.common import cfg
 
 AGENT_OPTS = [
     cfg.StrOpt('root_helper', default='sudo'),
