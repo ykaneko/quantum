@@ -18,18 +18,18 @@
 
 import eventlet
 import logging as std_logging
+import os
 import shlex
 import socket
 import sys
 
-from nova.openstack.common import cfg as nova_cfg
+from oslo.config import cfg
 
 from quantum.agent.common import config
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import utils
 from quantum.common import config
 from quantum.common import topics
-from quantum.openstack.common import cfg
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
@@ -37,13 +37,9 @@ from quantum.openstack.common.rpc import dispatcher
 from quantum.fakevm import rpc as fakevm_rpc
 
 
-nova_cfg.CONF.import_opt('libvirt_vif_driver', 'nova.virt.libvirt.driver')
 LOG = logging.getLogger(__name__)
 
 
-AGENT_OPTS = [
-    cfg.StrOpt('root_helper', default='sudo'),
-]
 DEV_NAME_LEN = 13   # NOTE(yamahata): for dhclient
                     # != quantum.agent.linux.interface.DEV_NAME_LEN = 14
                     # Linux socket packet uses the first 13
@@ -70,17 +66,16 @@ class QuantumFakeVMAgent(object):
         self.nova_conf = nova_conf
         self.conf = conf
         self.host = conf.FAKEVM.host
-        self.root_helper = conf.AGENT.root_helper
+        self.path = os.path.abspath(os.path.dirname(__file__))
 
         self.fakevm_agent_plugin = importutils.import_object(
             conf.FAKEVM.fakevm_agent_plugin)
-        self.fakevm_agent_plugin.init(nova_conf, conf)
+        self.fakevm_agent_plugin.init(conf)
+        self.vif_type = self.fakevm_agent_plugin.get_vif_type()
+        self.root_helper = conf.AGENT.root_helper
 
-        self.vif_driver = importutils.import_object(
-            nova_cfg.CONF.libvirt_vif_driver)
         self.setup_rpc()
 
-        self.nova_conf.log_opt_values(LOG, std_logging.DEBUG)
         self.conf.log_opt_values(LOG, std_logging.DEBUG)
 
     def setup_rpc(self):
@@ -114,34 +109,27 @@ class QuantumFakeVMAgent(object):
     def _execute(self, cmd):
         utils.execute(cmd, root_helper=self.root_helper)
 
-    def _make_args(self, instance_id, vif_uuid, mac, bridge_name):
-        instance = {
-            'host': self.host,
-            'uuid': instance_id,
-        }
-        network = {}
-        if bridge_name:
-            network['bridge'] = bridge_name
-        mapping = {
-            'vif_uuid': vif_uuid,
-            'mac': mac,
-        }
-        vif = (network, mapping)
-        return (instance, vif)
+    def _exec_vif_wrapper(self, subcmd):
+        cmd = ['python']
+        cmd += [os.path.join(self.path, 'vif.py')]
+        cmd += self.nova_conf
+        cmd += subcmd
+        return utils.execute(cmd)
 
     def plug(self, ctx, instance_id, vif_uuid, mac, bridge_name=None):
         LOG.debug('plug ctx %s', ctx)
         LOG.debug('plug %s %s %s %s', instance_id, vif_uuid, mac, bridge_name)
 
-        instance, vif = self._make_args(instance_id, vif_uuid, mac,
-                                        bridge_name)
-        self.vif_driver.plug(instance, vif)
+        cmd = ['plug', self.host, instance_id, self.vif_type, vif_uuid, mac]
+        if bridge_name:
+            cmd += [bridge_name]
+        self._exec_vif_wrapper(cmd)
 
         br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
         ip_wrapper = ip_lib.IPWrapper(self.root_helper)
         br_veth, vm_veth = ip_wrapper.add_veth(br_veth_name, vm_veth_name)
-        self._execute(['brctl', 'addif', self.vif_driver.get_br_name(vif_uuid),
-                       br_veth_name])
+        br_name = self._exec_vif_wrapper(['bridge-name', vif_uuid])
+        self._execute(['brctl', 'addif', br_name, br_veth_name])
 
         vm_veth.link.set_address(mac)
         ns_name = self._get_ns_name(vif_uuid)
@@ -166,9 +154,8 @@ class QuantumFakeVMAgent(object):
         if ip_lib.device_exists(br_veth_name, root_helper=self.root_helper):
             br_veth = ip_wrapper.device(br_veth_name)
             br_veth.link.set_down()
-            self._execute(['brctl', 'delif',
-                           self.vif_driver.get_br_name(vif_uuid),
-                           br_veth_name])
+            br_name = self._exec_vif_wrapper(['bridge-name', vif_uuid])
+            self._execute(['brctl', 'delif', br_name, br_veth_name])
             br_veth.link.delete()   # vm_veth is also deleted.
 
         if ip_wrapper.netns.exists(ns_name):
@@ -183,9 +170,10 @@ class QuantumFakeVMAgent(object):
 
         LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
 
-        instance, vif = self._make_args(instance_id, vif_uuid, mac,
-                                        bridge_name)
-        self.vif_driver.unplug(instance, vif)
+        cmd = ['unplug', self.host, self.vif_type, vif_uuid]
+        if bridge_name:
+            cmd += [bridge_name]
+        self._exec_vif_wrapper(cmd)
 
     def unplug_all_host(self, ctx, vif_uuid, bridge_name=None):
         LOG.debug('unplug_all_host %s %s %s', ctx, vif_uuid, bridge_name)
@@ -221,8 +209,8 @@ def main():
             q_opt = '--config-file'
             continue
         if arg == '--':
-            n_args += sys.args[i:]
-            q_args += sys.args[i:]
+            n_args += sys.argv[i:]
+            q_args += sys.argv[i:]
             n_opt = None
             q_opt = None
             break
@@ -238,15 +226,12 @@ def main():
         n_args += arg
         q_args += arg
 
-    nova_cfg.CONF(args=n_args, project='nova')
-
     conf = cfg.CONF
-    conf.register_opts(AGENT_OPTS, 'AGENT')
     conf.register_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
     conf(args=q_args, project='quantum')
     config.setup_logging(conf)
 
-    agent = QuantumFakeVMAgent(nova_cfg.CONF, conf)
+    agent = QuantumFakeVMAgent(n_args, conf)
     agent.wait_rpc()
 
 

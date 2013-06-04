@@ -94,10 +94,14 @@ def add_cmd_parsers(subparsers):
     unplug_act.add_argument('vif_uuid')
 
 
-def main(argv=None):
+def main():
     cfg.CONF.import_opt('libvirt_vif_driver', 'nova.virt.libvirt.driver')
     cfg.CONF.register_cli_opt(
         cfg.SubCommandOpt('cmd', handler=add_cmd_parsers))
-    cfg.CONF(args=argv, project='nova')
+    cfg.CONF(args=sys.argv[1:], project='nova')
 
     return QuantumFakeVMVifWrapper(cfg.CONF).run(cfg.CONF.cmd)
+
+
+if __name__ == '__main__':
+    main()
