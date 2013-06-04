@@ -25,6 +25,7 @@ ovs-vsctl_usr: CommandFilter, /usr/bin/ovs-vsctl, root
 ovs-vsctl_sbin: CommandFilter, /sbin/ovs-vsctl, root
 ovs-vsctl_sbin_usr: CommandFilter, /usr/sbin/ovs-vsctl, root
 
+# utility commands for debugging
 ping: CommandFilter, /bin/ping, root
 ping_usr: CommandFilter, /usr/bin/ping, root
 ping_sbin: CommandFilter, /sbin/ping, root
