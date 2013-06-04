@@ -24,5 +24,9 @@ class QuantumFakeVMAgentPluginBase(object):
     __metaclass__ = ABCMeta
 
     @abstractmethod
-    def init(self, nova_conf, quantum_conf):
+    def init(self, quantum_conf):
+        pass
+
+    @abstractmethod
+    def get_vif_type(self):
         pass
