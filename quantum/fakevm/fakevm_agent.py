@@ -56,14 +56,16 @@ class QuantumFakeVMAgent(object):
                    default=socket.gethostname(),
                    help='host name. default host'),
         cfg.StrOpt('fakevm_agent_plugin', help='fakevm agent plugin'),
+        cfg.StrOpt('nova_conf',
+                   default='/etc/nova/nova.conf',
+                   help='path to nova.conf'),
     ]
 
     RPC_API_VERSION = '1.0'
 
-    def __init__(self, nova_conf, conf):
+    def __init__(self, conf):
         super(QuantumFakeVMAgent, self).__init__()
         LOG.debug('host %s %s', conf.host, conf.FAKEVM.host)
-        self.nova_conf = nova_conf
         self.conf = conf
         self.host = conf.FAKEVM.host
         self.path = os.path.abspath(os.path.dirname(__file__))
@@ -112,7 +114,7 @@ class QuantumFakeVMAgent(object):
     def _exec_vif_wrapper(self, subcmd):
         cmd = ['python']
         cmd += [os.path.join(self.path, 'vif.py')]
-        cmd += self.nova_conf
+        cmd += ['--config-file', self.conf.FAKEVM.nova_conf]
         cmd += subcmd
         return utils.execute(cmd)
 
@@ -191,47 +193,11 @@ class QuantumFakeVMAgent(object):
 def main():
     eventlet.monkey_patch()
 
-    # Hacking for handling both nova and quantum config files
-    n_args = []
-    q_args = []
-    n_opt = None
-    q_opt = None
-    for i, arg in enumerate(sys.argv[1:], 1):
-        if arg.startswith('--nova-config-file'):
-            n_opt = '--config-file'
-            continue
-        if (arg.startswith('--quantum-config-file') or
-                arg.startswith('--config-file')):
-            q_opt = '--config-file'
-            continue
-        if arg.startswith('--fakevm-config-file'):
-            n_opt = '--config-file'
-            q_opt = '--config-file'
-            continue
-        if arg == '--':
-            n_args += sys.argv[i:]
-            q_args += sys.argv[i:]
-            n_opt = None
-            q_opt = None
-            break
+    cfg.CONF.register_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
+    cfg.CONF(project='quantum')
+    config.setup_logging(cfg.CONF)
 
-        if n_opt:
-            n_args.extend([n_opt, arg])
-        if q_opt:
-            q_args.extend([q_opt, arg])
-        if n_opt or q_opt:
-            n_opt = None
-            q_opt = None
-            continue
-        n_args += arg
-        q_args += arg
-
-    conf = cfg.CONF
-    conf.register_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
-    conf(args=q_args, project='quantum')
-    config.setup_logging(conf)
-
-    agent = QuantumFakeVMAgent(n_args, conf)
+    agent = QuantumFakeVMAgent(cfg.CONF)
     agent.wait_rpc()
 
 
