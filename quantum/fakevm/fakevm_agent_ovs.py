@@ -42,16 +42,12 @@ class QuantumFakeVMAgentOVS(
         self.root_helper = None
         self.int_br = None
 
-    def init(self, quantum_conf):
-        self.conf = quantum_conf
-        self.root_helper = self.conf.AGENT.root_helper
-
+    def init(self, conf):
+        super(QuantumFakeVMAgentOVS, self).init(conf)
+        self.vif_type = portbindings.VIF_TYPE_OVS
         if (self.conf.FAKEVM.allow_multi_node_emulate and
             self.conf.FAKEVM.use_tunnel):
             self._init_tunnel()
-
-    def get_vif_type(self):
-        return portbindings.VIF_TYPE_OVS
 
     def cleanup(self):
         if self.conf.FAKEVM.use_tunnel:

@@ -42,14 +42,11 @@ class QuantumFakeVMAgentLB(
         self.interface_mappings = q_utils.parse_mappings(
             cfg.CONF.LINUX_BRIDGE.physical_interface_mappings)
 
-    def init(self, quantum_conf):
-        self.conf = quantum_conf
-        self.root_helper = self.conf.AGENT.root_helper
+    def init(self, conf):
+        super(QuantumFakeVMAgentLB, self).init(conf)
+        self.vif_type = portbindings.VIF_TYPE_BRIDGE
         if self.conf.FAKEVM.allow_multi_node_emulate:
             self._init_bridge()
-
-    def get_vif_type(self):
-        return portbindings.VIF_TYPE_BRIDGE
 
     def cleanup(self):
         self._cleanup_bridge()

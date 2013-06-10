@@ -17,8 +17,27 @@
 # @author: Isaku Yamahata
 
 from abc import ABCMeta, abstractmethod
+import os
+import shlex
 
 from oslo.config import cfg
+
+from quantum.agent.linux import ip_lib
+from quantum.agent.linux import utils
+from quantum.openstack.common import log as logging
+
+
+LOG = logging.getLogger(__name__)
+
+
+DEV_NAME_LEN = 13   # NOTE(yamahata): for dhclient
+                    # != quantum.agent.linux.interface.DEV_NAME_LEN = 14
+                    # Linux socket packet uses the first 13
+                    # bytes for network interface name as
+                    # struct sockaddr_pkt::spkt_device[14] and it zeros
+                    # the last bytes.
+                    # If name is longer than 13, it fails to send packet
+                    # to the device via pakcet socket with ENODEV.
 
 
 class QuantumFakeVMAgentPluginBase(object):
@@ -26,17 +45,107 @@ class QuantumFakeVMAgentPluginBase(object):
     __metaclass__ = ABCMeta
 
     OPTS = [
+        cfg.StrOpt('nova_conf',
+                   default='/etc/nova/nova.conf',
+                   help='path to nova.conf'),
         cfg.StrOpt('allow_multi_node_emulate', default=False,
                    help='Allow the multiple node emulation'),
     ]
 
-    @abstractmethod
-    def init(self, quantum_conf):
-        pass
+    def init(self, conf):
+        self.conf = conf
+        self.host = conf.FAKEVM.host
+        self.path = os.path.abspath(os.path.dirname(__file__))
+        self.root_helper = self.conf.AGENT.root_helper
+        self.vif_type = None
 
-    @abstractmethod
-    def get_vif_type(self):
-        pass
+    @staticmethod
+    def _get_veth_pair_names(vif_uuid):
+        return (('qfb%s' % vif_uuid)[:DEV_NAME_LEN],
+                ('qfv%s' % vif_uuid)[:DEV_NAME_LEN])
+
+    def _get_ns_name(self, vif_uuid):
+        return 'fakevm-%s-%s' % (self.host, vif_uuid)
+
+    def _execute(self, cmd):
+        utils.execute(cmd, root_helper=self.root_helper)
+
+    def _exec_vif_wrapper(self, subcmd):
+        cmd = ['python']
+        cmd += [os.path.join(self.path, 'vif.py')]
+        cmd += ['--config-file', self.conf.FAKEVM.nova_conf]
+        cmd += subcmd
+        return utils.execute(cmd)
+
+    def _vif_plug(self, instance_id, vif_uuid, mac, bridge_name=None):
+        cmd = ['plug', self.host, instance_id, self.vif_type, vif_uuid, mac]
+        if bridge_name:
+            cmd += [bridge_name]
+        self._exec_vif_wrapper(cmd)
+
+    def _vif_unplug(self, vif_uuid, bridge_name=None):
+        cmd = ['unplug', self.host, self.vif_type, vif_uuid]
+        if bridge_name:
+            cmd += [bridge_name]
+        self._exec_vif_wrapper(cmd)
+
+    def _probe_plug(self, vif_uuid, mac):
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        br_veth, vm_veth = ip_wrapper.add_veth(br_veth_name, vm_veth_name)
+        br_name = self._exec_vif_wrapper(['bridge-name', vif_uuid])
+        self._execute(['brctl', 'addif', br_name, br_veth_name])
+
+        vm_veth.link.set_address(mac)
+        ns_name = self._get_ns_name(vif_uuid)
+        ns_obj = ip_wrapper.ensure_namespace(ns_name)
+        ns_obj.add_device_to_namespace(vm_veth)
+
+        vm_veth.link.set_up()
+        br_veth.link.set_up()
+
+        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
+
+    def _probe_unplug(self, vif_uuid):
+        instance_id = 'dummy-instance-id'       # unused by vif driver
+        mac = 'un:us:ed:ma:ca:dr'               # unused by vif driver
+
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        ns_name = self._get_ns_name(vif_uuid)
+
+        if ip_lib.device_exists(br_veth_name, root_helper=self.root_helper):
+            br_veth = ip_wrapper.device(br_veth_name)
+            br_veth.link.set_down()
+            br_name = self._exec_vif_wrapper(['bridge-name', vif_uuid])
+            self._execute(['brctl', 'delif', br_name, br_veth_name])
+            br_veth.link.delete()   # vm_veth is also deleted.
+
+        if ip_wrapper.netns.exists(ns_name):
+            ip_wrapper_ns = ip_lib.IPWrapper(self.root_helper, ns_name)
+            if ip_lib.device_exists(vm_veth_name, root_helper=self.root_helper,
+                                    namespace=ns_name):
+                vm_veth = ip_wrapper_ns.device(vm_veth_name)
+                vm_veth.link.set_down()
+                vm_veth.link.delete()
+            #ip_wrapper_ns.garbage_collect_namespace()
+            ip_wrapper_ns.netns.delete(ns_name)
+
+        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
+
+    def plug(self, instance_id, vif_uuid, mac, bridge_name=None):
+        self._vif_plug(instance_id, vif_uuid, mac, bridge_name)
+        self._probe_plug(vif_uuid, mac)
+
+    def unplug(self, vif_uuid, bridge_name=None):
+        self._probe_unplug(vif_uuid)
+        self._vif_unplug(vif_uuid, bridge_name)
+
+    def exec_command(self, vif_uuid, command):
+        ns_name = self._get_ns_name(vif_uuid)
+        ip_wrapper_ns = ip_lib.IPWrapper(self.root_helper, ns_name)
+        command = shlex.split(command) if command else ''
+        return ip_wrapper_ns.netns.execute(command)
 
 
 cfg.CONF.register_opts(QuantumFakeVMAgentPluginBase.OPTS, 'FAKEVM')
