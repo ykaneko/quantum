@@ -50,10 +50,11 @@ class QuantumFakeVMAgentRyu(
         self.conf = quantum_conf
         self.root_helper = self.conf.AGENT.root_helper
 
-        if self.conf.FAKEVM.use_tunnel:
-            self._init_tunnel()
-        else:
-            self._init_bridge()
+        if self.conf.FAKEVM.allow_multi_node_emulate:
+            if self.conf.FAKEVM.use_tunnel:
+                self._init_tunnel()
+            else:
+                self._init_bridge()
 
     def get_vif_type(self):
         return portbindings.VIF_TYPE_OVS

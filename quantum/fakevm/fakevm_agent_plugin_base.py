@@ -18,10 +18,17 @@
 
 from abc import ABCMeta, abstractmethod
 
+from oslo.config import cfg
+
 
 class QuantumFakeVMAgentPluginBase(object):
 
     __metaclass__ = ABCMeta
+
+    OPTS = [
+        cfg.StrOpt('allow_multi_node_emulate', default=False,
+                   help='Allow the multiple node emulation'),
+    ]
 
     @abstractmethod
     def init(self, quantum_conf):
@@ -30,3 +37,6 @@ class QuantumFakeVMAgentPluginBase(object):
     @abstractmethod
     def get_vif_type(self):
         pass
+
+
+cfg.CONF.register_opts(QuantumFakeVMAgentPluginBase.OPTS, 'FAKEVM')
