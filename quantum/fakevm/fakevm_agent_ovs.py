@@ -46,7 +46,8 @@ class QuantumFakeVMAgentOVS(
         self.conf = quantum_conf
         self.root_helper = self.conf.AGENT.root_helper
 
-        if self.conf.FAKEVM.use_tunnel:
+        if (self.conf.FAKEVM.allow_multi_node_emulate and
+            self.conf.FAKEVM.use_tunnel):
             self._init_tunnel()
 
     def get_vif_type(self):

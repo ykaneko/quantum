@@ -45,7 +45,8 @@ class QuantumFakeVMAgentLB(
     def init(self, quantum_conf):
         self.conf = quantum_conf
         self.root_helper = self.conf.AGENT.root_helper
-        self._init_bridge()
+        if self.conf.FAKEVM.allow_multi_node_emulate:
+            self._init_bridge()
 
     def get_vif_type(self):
         return portbindings.VIF_TYPE_BRIDGE
@@ -77,12 +78,10 @@ class QuantumFakeVMAgentLB(
             time.sleep(1)       # XXX: race
 
     def _get_bridge_name(self, device):
-        return (self._BRIDGE_PREFIX +
-                device)[:fakevm_agent.DEV_NAME_LEN]
+        return (self._BRIDGE_PREFIX + device)[:fakevm_agent.DEV_NAME_LEN]
 
     def _get_port_name(self, device):
-        return (self._INTERFACE_PREFIX +
-                device)[:fakevm_agent.DEV_NAME_LEN]
+        return (self._INTERFACE_PREFIX + device)[:fakevm_agent.DEV_NAME_LEN]
 
     def _init_bridge(self):
         for physical_network in self.interface_mappings:
