@@ -20,7 +20,6 @@
 from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
-from quantum.agent.linux import ovs_lib
 from quantum.extensions import portbindings
 from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.plugins.openvswitch.common import config
@@ -53,10 +52,8 @@ class QuantumFakeVMAgentOVS(
         if self.conf.FAKEVM.use_tunnel:
             self._cleanup_tunnel()
 
-    def _ensure_ovs_br(self, ovs_bridge_name):
-        ovs_br = ovs_lib.OVSBridge(ovs_bridge_name, self.root_helper)
-        ovs_br.run_vsctl(['--', '--may-exist', 'add-br', ovs_bridge_name])
-        return ovs_br
+    def _get_vif_br_name(self, network_id, vif_uuid):
+        return (self.conf.OVS.integration_bridge)
 
     def _init_tunnel(self):
         self._cleanup_tunnel()
@@ -75,7 +72,7 @@ class QuantumFakeVMAgentOVS(
             # ip link set $tunnel_interface up
             device.link.set_up()
 
-        self._ensure_ovs_br(self.conf.OVS.integration_bridge)
+        self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
 
     def _cleanup_tunnel(self):
         dev_name = self.conf.FAKEVM.tunnel_interface

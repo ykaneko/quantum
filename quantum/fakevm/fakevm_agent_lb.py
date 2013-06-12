@@ -23,17 +23,22 @@ from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import utils
+from quantum.agent.linux.interface import LinuxInterfaceDriver as linux_if
 from quantum.common import utils as q_utils
 from quantum.extensions import portbindings
 from quantum.fakevm import fakevm_agent
 from quantum.fakevm import fakevm_agent_plugin_base
+from quantum.openstack.common import log as logging
 from quantum.plugins.linuxbridge.common import config
+
+
+LOG = logging.getLogger(__name__)
 
 
 class QuantumFakeVMAgentLB(
         fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
     _BRIDGE_PREFIX = 'qfbr-'
-    _INTERFACE_PREFIX = 'qfif-'
+    _PORT_PREFIX = 'qfp-'
 
     def __init__(self):
         super(QuantumFakeVMAgentLB, self).__init__()
@@ -50,6 +55,18 @@ class QuantumFakeVMAgentLB(
 
     def cleanup(self):
         self._cleanup_bridge()
+
+    def _get_vif_br_name(self, network_id, vif_uuid):
+        return 'brq' + network_id[0:11]
+
+    def _get_tap_name(self, device):
+        return 'tap' + device[0:11]
+
+    def _get_hub_name(self, device):
+        return (self._BRIDGE_PREFIX + device)[:self.DEV_NAME_LEN]
+
+    def _get_port_name(self, device):
+        return (self._PORT_PREFIX + device)[:self.DEV_NAME_LEN]
 
     def _execute(self, command):
         return utils.execute(command, root_helper=self.root_helper)
@@ -74,15 +91,9 @@ class QuantumFakeVMAgentLB(
         else:
             time.sleep(1)       # XXX: race
 
-    def _get_bridge_name(self, device):
-        return (self._BRIDGE_PREFIX + device)[:fakevm_agent.DEV_NAME_LEN]
-
-    def _get_port_name(self, device):
-        return (self._INTERFACE_PREFIX + device)[:fakevm_agent.DEV_NAME_LEN]
-
     def _init_bridge(self):
         for physical_network in self.interface_mappings:
-            br_name = self._get_bridge_name(physical_network)
+            br_name = self._get_hub_name(physical_network)
             self._ensure_bridge(br_name)
             port_name = self._get_port_name(
                 self.interface_mappings[physical_network])
@@ -97,7 +108,54 @@ class QuantumFakeVMAgentLB(
 
     def _cleanup_bridge(self):
         for physical_network in self.interface_mappings:
-            br_name = self._get_bridge_name(physical_network)
+            br_name = self._get_hub_name(physical_network)
             port_name = self._get_port_name(
                 self.interface_mappings[physical_network])
             self._execute(['brctl', 'delif', br_name, port_name])
+
+    def _make_vif_args(self, instance_id, network_id, vif_uuid, mac,
+                       bridge_name):
+        if not bridge_name:
+            bridge_name = self._get_vif_br_name(network_id, vif_uuid)
+        interface, vif = super(QuantumFakeVMAgentLB, self)._make_vif_args(
+            instance_id, network_id, vif_uuid, mac, bridge_name)
+        network, mapping = vif
+        network['bridge_interface'] = None
+        mapping['should_create_bridge'] = True
+        return (interface, vif)
+
+    def _probe_plug(self, network_id, vif_uuid, mac):
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        br_veth_name = self._get_tap_name(vif_uuid)
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        br_veth, vm_veth = ip_wrapper.add_veth(br_veth_name, vm_veth_name)
+
+        vm_veth.link.set_address(mac)
+        ns_name = self._get_ns_name(vif_uuid)
+        ns_obj = ip_wrapper.ensure_namespace(ns_name)
+        ns_obj.add_device_to_namespace(vm_veth)
+
+        vm_veth.link.set_up()
+        br_veth.link.set_up()
+
+    def _probe_unplug(self, network_id, vif_uuid):
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        br_veth_name = self._get_tap_name(vif_uuid)
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        ns_name = self._get_ns_name(vif_uuid)
+
+        if ip_lib.device_exists(br_veth_name, root_helper=self.root_helper):
+            br_veth = ip_wrapper.device(br_veth_name)
+            br_veth.link.set_down()
+            br_name = self._get_vif_br_name(network_id, vif_uuid)
+            self._execute(['brctl', 'delif', br_name, br_veth_name])
+            br_veth.link.delete()   # vm_veth is also deleted.
+
+        if ip_wrapper.netns.exists(ns_name):
+            ip_wrapper_ns = ip_lib.IPWrapper(self.root_helper, ns_name)
+            if ip_lib.device_exists(vm_veth_name, root_helper=self.root_helper,
+                                    namespace=ns_name):
+                vm_veth = ip_wrapper_ns.device(vm_veth_name)
+                vm_veth.link.set_down()
+                vm_veth.link.delete()
+            ip_wrapper_ns.netns.delete(ns_name)

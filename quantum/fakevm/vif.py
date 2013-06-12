@@ -17,6 +17,7 @@
 # @author: Isaku Yamahata
 # @author: Yoshihiro Kaneko
 
+import ast
 import sys
 
 from oslo.config import cfg
@@ -61,14 +62,13 @@ class QuantumFakeVMVifWrapper(object):
         return (instance, vif)
 
     def _plug(self, cmd):
-        instance, vif = self._make_args(cmd)
+        instance = ast.literal_eval(cmd.instance)
+        vif = ast.literal_eval(cmd.vif)
         self.vif_driver.plug(instance, vif)
 
     def _unplug(self, cmd):
-        cmd.instance_id = 'dummy-instance-id'       # unused by vif driver
-        cmd.mac = 'un:us:ed:ma:ca:dr'               # unused by vif driver
-
-        instance, vif = self._make_args(cmd)
+        instance = ast.literal_eval(cmd.instance)
+        vif = ast.literal_eval(cmd.vif)
         self.vif_driver.unplug(instance, vif)
 
     def _bridge_name(self, cmd):
@@ -77,18 +77,12 @@ class QuantumFakeVMVifWrapper(object):
 
 def add_cmd_parsers(subparsers):
     plug_act = subparsers.add_parser('plug')
-    plug_act.add_argument('vif_host')
-    plug_act.add_argument('instance_id')
-    plug_act.add_argument('vif_type')
-    plug_act.add_argument('vif_uuid')
-    plug_act.add_argument('mac')
-    plug_act.add_argument('bridge_name', nargs='?')
+    plug_act.add_argument('instance')
+    plug_act.add_argument('vif')
 
     unplug_act = subparsers.add_parser('unplug')
-    unplug_act.add_argument('vif_host')
-    unplug_act.add_argument('vif_type')
-    unplug_act.add_argument('vif_uuid')
-    unplug_act.add_argument('bridge_name', nargs='?')
+    unplug_act.add_argument('instance')
+    unplug_act.add_argument('vif')
 
     unplug_act = subparsers.add_parser('bridge-name')
     unplug_act.add_argument('vif_uuid')
