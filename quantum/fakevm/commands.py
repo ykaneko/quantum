@@ -74,18 +74,22 @@ class FakeVMCommand(QuantumCommand):
         return port
 
     def _plug(self, host, port, bridge_name=None):
+        network_id = port['network_id']
         vif_uuid = port['id']
         instance_id = port['instance_id']
         mac_address = port['mac_address']
         fakevm_rpcapi = self.get_fakevm_rpcapi()
         ctx = context.get_admin_context_without_session()
         fakevm_rpcapi.plug(ctx, host,
-                           instance_id, vif_uuid, mac_address, bridge_name)
+                           instance_id, network_id, vif_uuid, mac_address,
+                           bridge_name)
 
-    def _unplug(self, host, vif_uuid, bridge_name=None):
+    def _unplug(self, host, port, bridge_name=None):
+        network_id = port['network_id']
+        vif_uuid = port['id']
         fakevm_rpcapi = self.get_fakevm_rpcapi()
         ctx = context.get_admin_context_without_session()
-        fakevm_rpcapi.unplug(ctx, host, vif_uuid, bridge_name)
+        fakevm_rpcapi.unplug(ctx, host, network_id, vif_uuid, bridge_name)
 
 
 class CreatePort(FakeVMCommand):
@@ -140,9 +144,12 @@ class DeletePort(FakeVMCommand):
         # TODO:XXX use fanout to unplug on all hosts
         self.log.debug('run(%s)' % parsed_args)
 
-        self._unplug(parsed_args.host,
-                     parsed_args.vif_uuid, parsed_args.bridge_name)
-        self._delete_port(parsed_args.vif_uuid)
+        host = parsed_args.host
+        vif_uuid = parsed_args.vif_uuid
+        port = self._show_port(vif_uuid)
+
+        self._unplug(host, port, parsed_args.bridge_name)
+        self._delete_port(vif_uuid)
         self.app.stdout.write(_('VM port deleted : %s\n') %
                               parsed_args.vif_uuid)
 
@@ -185,7 +192,7 @@ class Migrate(FakeVMCommand):
         # TODO: send GARP packet on dst_host
         # start dhcp client?
 
-        self._unplug(src_host, vif_uuid, parsed_args.src_bridge_name)
+        self._unplug(src_host, port, parsed_args.src_bridge_name)
         self.app.stdout.write(_('VM migrate : %s %s -> %s\n') %
                               (vif_uuid, src_host, dst_host))
 
@@ -238,11 +245,13 @@ class Unplug(FakeVMCommand):
     def run(self, parsed_args):
         self.log.debug('run(%s)' % parsed_args)
 
-        self._unplug(parsed_args.host,
-                     parsed_args.vif_uuid, parsed_args.bridge_name)
+        host = parsed_args.host
+        vif_uuid = parsed_args.vif_uuid
+        port = self._show_port(vif_uuid)
+
+        self._unplug(host, port, parsed_args.bridge_name)
         self.app.stdout.write(_('VM port unpluged on %s: %s %s\n') %
-                              (parsed_args.host,
-                               parsed_args.vif_uuid, parsed_args.bridge_name))
+                              (host, vif_uuid, parsed_args.bridge_name))
 
 
 class UnplugAllHost(FakeVMCommand):
@@ -262,12 +271,16 @@ class UnplugAllHost(FakeVMCommand):
     def run(self, parsed_args):
         self.log.debug('run(%s)' % parsed_args)
 
+        vif_uuid = parsed_args.vif_uuid
+        port = self._show_port(vif_uuid)
+        network_id = port['network_id']
+
         fakevm_rpcapi = self.get_fakevm_rpcapi()
         ctx = context.get_admin_context_without_session()
-        fakevm_rpcapi.unplug_all_host(ctx, parsed_args.vif_uuid,
+        fakevm_rpcapi.unplug_all_host(ctx, network_id, vif_uuid,
                                       parsed_args.bridge_name)
-        self.app.stdout.write(_('VM port unpluged on all host: %s %s\n') %
-                              (parsed_args.vif_uuid, parsed_args.bridge_name))
+        self.app.stdout.write(_('VM port unpluged on all host: %s %s %s\n') %
+                              (network_id, vif_uuid, parsed_args.bridge_name))
 
 
 class ExecCommand(FakeVMCommand):

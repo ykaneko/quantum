@@ -18,7 +18,6 @@
 
 import eventlet
 import logging as std_logging
-import os
 import socket
 
 from oslo.config import cfg
@@ -81,19 +80,23 @@ class QuantumFakeVMAgent(object):
         while True:
             eventlet.sleep(1000)
 
-    def plug(self, ctx, instance_id, vif_uuid, mac, bridge_name=None):
+    def plug(self, ctx, instance_id, network_id, vif_uuid, mac,
+             bridge_name=None):
         LOG.debug('plug ctx %s', ctx)
-        LOG.debug('plug %s %s %s %s', instance_id, vif_uuid, mac, bridge_name)
-        self.fakevm_agent_plugin.plug(instance_id, vif_uuid, mac, bridge_name)
+        LOG.debug('plug %s %s %s %s %s',
+                  instance_id, network_id, vif_uuid, mac, bridge_name)
+        self.fakevm_agent_plugin.plug(instance_id, network_id, vif_uuid, mac,
+                                      bridge_name)
 
-    def unplug(self, ctx, vif_uuid, bridge_name=None):
+    def unplug(self, ctx, network_id, vif_uuid, bridge_name=None):
         LOG.debug('unplug ctx %s', ctx)
-        LOG.debug('unplug %s %s', vif_uuid, bridge_name)
-        self.fakevm_agent_plugin.unplug(vif_uuid, bridge_name)
+        LOG.debug('unplug %s %s %s', network_id, vif_uuid, bridge_name)
+        self.fakevm_agent_plugin.unplug(network_id, vif_uuid, bridge_name)
 
-    def unplug_all_host(self, ctx, vif_uuid, bridge_name=None):
-        LOG.debug('unplug_all_host %s %s %s', ctx, vif_uuid, bridge_name)
-        self.unplug(ctx, vif_uuid, bridge_name)
+    def unplug_all_host(self, ctx, network_id, vif_uuid, bridge_name=None):
+        LOG.debug('unplug_all_host %s %s %s %s',
+                  ctx, network_id, vif_uuid, bridge_name)
+        self.unplug(ctx, network_id, vif_uuid, bridge_name)
 
     def exec_command(self, ctx, vif_uuid, command):
         LOG.debug('exec_command ctx %s', ctx)
