@@ -16,12 +16,9 @@
 #    under the License.
 # @author: Isaku Yamahata
 
-import time
-
 from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
-from quantum.agent.linux import ovs_lib
 from quantum.agent.linux import utils
 from quantum.extensions import portbindings
 from quantum.fakevm import fakevm_agent
@@ -61,50 +58,17 @@ class QuantumFakeVMAgentRyu(
         else:
             self._cleanup_bridge()
 
-    def _execute(self, command):
-        return utils.execute(command, root_helper=self.root_helper)
-
-    def _device_exists(self, device):
-        try:
-            self._execute(['ip', 'link', 'show', 'dev', device])
-        except RuntimeError:
-            return False
-        return True
-
-    def _ensure_ovs_br(self, ovs_bridge_name):
-        ovs_br = ovs_lib.OVSBridge(ovs_bridge_name, self.root_helper)
-        ovs_br.run_vsctl(['--', '--may-exist', 'add-br', ovs_bridge_name])
-        return ovs_br
-
-    def _bridge_exists(self, bridge_name):
-        try:
-            self._execute(['brctl', 'show', bridge_name])
-        except RuntimeError:
-            return False
-        return True
-
-    def _ensure_bridge(self, bridge_name):
-        br_name = self.conf.FAKEVM.vir_bridge
-        if not self._bridge_exists(br_name):
-            if self._execute(['brctl', 'addbr', br_name]):
-                raise RuntimeError('brctl addbr %s failed' % br_name)
-            if self._execute(['brctl', 'setfd', br_name, str(0)]):
-                raise RuntimeError('brctl setfd %s 0 failed' % br_name)
-            if self._execute(['brctl', 'stp', br_name, 'off']):
-                raise RuntimeError('brctl stp %s off failed' % br_name)
-            if self._execute(['ip', 'link', 'set', br_name, 'up']):
-                raise RuntimeError('ip link set %s up failed' % br_name)
-        else:
-            time.sleep(1)       # XXX: race
+    def _get_vif_br_name(self, network_id, vif_uuid):
+        return (self.conf.OVS.integration_bridge)
 
     def _get_port_name(self):
         return (self._BRIDGE_PREFIX +
-                self.conf.FAKEVM.host)[:fakevm_agent.DEV_NAME_LEN]
+                self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
 
     def _init_bridge(self):
         br_name = self.conf.FAKEVM.vir_bridge
         self._ensure_bridge(br_name)
-        self.int_br = self._ensure_ovs_br(self.conf.OVS.integration_bridge)
+        self.int_br = self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
         port_name = self._get_port_name()
         self.int_br.add_port(port_name)
         self._execute(['brctl', 'addif', br_name, port_name])
@@ -130,7 +94,7 @@ class QuantumFakeVMAgentRyu(
             # ip link set $tunnel_interface up
             device.link.set_up()
 
-        self._ensure_ovs_br(self.conf.OVS.integration_bridge)
+        self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
 
     def _cleanup_tunnel(self):
         dev_name = self.conf.OVS.tunnel_interface
