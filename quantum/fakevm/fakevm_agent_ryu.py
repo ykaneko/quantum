@@ -35,7 +35,7 @@ class QuantumFakeVMAgentRyu(
     OPTS = [
         cfg.StrOpt('vir_bridge', default=_BRIDGE_PREFIX + 'default',
                    help='bridge name to emulate multiple node'),
-        cfg.StrOpt('use_tunnel', default=True,
+        cfg.BoolOpt('use_tunnel', default=True,
                    help='use tunnel or not (set True when gre tunneling app)'),
     ]
 
@@ -71,9 +71,14 @@ class QuantumFakeVMAgentRyu(
         br_name = self.conf.FAKEVM.vir_bridge
         self._ensure_bridge(br_name)
         self.int_br = self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
-        port_name = self._get_port_name()
-        self.int_br.add_port(port_name)
-        self._execute(['brctl', 'addif', br_name, port_name])
+        ovs_veth_name = ('qfo-' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        br_veth_name = ('qfb-' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        ovs_veth, br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
+        self.int_br.add_port(ovs_veth_name)
+        self._execute(['brctl', 'addif', br_name, br_veth_name])
+        ovs_veth.link.set_up()
+        br_veth.link.set_up()
 
     def _cleanup_bridge(self):
         port_name = self._get_port_name()
