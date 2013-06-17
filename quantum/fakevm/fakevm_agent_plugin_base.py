@@ -140,6 +140,7 @@ class QuantumFakeVMAgentPluginBase(object):
         if self.vif_type == portbindings.VIF_TYPE_OVS:
             mapping['ovs_interfaceid'] = vif_uuid
         vif = (network, mapping)
+        LOG.debug('vif args: instance=%s vif=%s', instance, vif)
         return (instance, vif)
 
     def _exec_vif_wrapper(self, subcmd):
