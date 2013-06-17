@@ -22,6 +22,10 @@ import sys
 
 from oslo.config import cfg
 
+# This is necessary for '_'. copied from nova/cmd/__init__.py.
+from nova.openstack.common import gettextutils
+gettextutils.install('fakevm-vif')
+
 from nova.network import model
 
 from quantum.openstack.common import importutils
