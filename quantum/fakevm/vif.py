@@ -44,7 +44,7 @@ class QuantumFakeVMVifWrapper(object):
             return self._unplug(cmd)
         elif cmd.name == 'bridge-name':
             return self._bridge_name(cmd)
-        sys.stderr.write('unknown command\n')
+        sys.stderr.write(_('unknown command') + '\n')
         sys.exit(1)
 
     def _make_args(self, cmd):

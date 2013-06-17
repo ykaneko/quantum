@@ -40,15 +40,18 @@ class FakeVMRpcApi(proxy.RpcProxy):
 
     def __init__(self, topic):
         self.topic = topic
-        LOG.error('topic %s', self.topic)
+        LOG.error(_('topic %s'), self.topic)
         super(FakeVMRpcApi, self).__init__(
             topic=topic, default_version=self.BASE_RPC_API_VERSION)
 
     def plug(self, context, host, instance_id, network_id, vif_uuid, mac,
              bridge_name=None):
-        self.LOG.debug('ctxt %s host %s '
-                       'instance_id %s vif_uuid %s mac %s brname %s',
-                       context, host, instance_id, vif_uuid, mac, bridge_name)
+        self.LOG.debug(_('ctxt %(context)s host %(host)s '
+                         'instance_id %(instance_id)s vif_uuid %(vif_uuid)s '
+                         'mac %(mac)s brname %(bridge_name)s'),
+                       {'context': context, 'host': host,
+                        'instance_id': instance_id, 'vif_uuid': vif_uuid,
+                        'mac': mac, 'bridge_name': bridge_name})
         return self.call(context,
                          self.make_msg('plug',
                                        instance_id=instance_id,
@@ -59,8 +62,10 @@ class FakeVMRpcApi(proxy.RpcProxy):
                          topic=self.get_topic_name(self.topic, host))
 
     def unplug(self, context, host, network_id, vif_uuid, bridge_name=None):
-        self.LOG.debug('ctxt %s host %s vif_uuid %s brname %s',
-                       context, host, vif_uuid, bridge_name)
+        self.LOG.debug(_('ctxt %(context)s host %(host)s '
+                         'vif_uuid %(vif_uuid)s brname %(bridge_name)s'),
+                       {'context': context, 'host': host, 'vif_uuid': vif_uuid,
+                        'bridge_name': bridge_name})
         return self.call(context,
                          self.make_msg('unplug',
                                        network_id=network_id,
@@ -70,7 +75,8 @@ class FakeVMRpcApi(proxy.RpcProxy):
 
     def unplug_all_host(self, context, network_id, vif_uuid, bridge_name):
         """unplug on all host"""
-        self.LOG.debug('ctxt %s vif_uuid %s', context, vif_uuid)
+        self.LOG.debug(_('ctxt %(context)s vif_uuid %(vif_uuid)s'),
+                       {'context': context, 'vif_uuid': vif_uuid})
         return self.fanout_cast(context,
                                 self.make_msg('unplug_all_host',
                                               network_id=network_id,
@@ -79,8 +85,10 @@ class FakeVMRpcApi(proxy.RpcProxy):
                                 topic=self.get_topic_name(self.topic))
 
     def exec_command(self, context, host, vif_uuid, command):
-        self.LOG.debug('ctxt %s host %s vif_uuid %s command %s',
-                       context, host, vif_uuid, command)
+        self.LOG.debug(_('ctxt %(context)s host %(host)s vif_uuid '
+                         '%(vif_uuid)s command %(command)s'),
+                       {'context': context, 'host': host, 'vif_uuid': vif_uuid,
+                        'command': command})
         return self.call(context,
                          self.make_msg('exec_command',
                                        vif_uuid=vif_uuid, command=command),

@@ -32,9 +32,6 @@ from quantum.openstack.common import log as logging
 from quantum.plugins.linuxbridge.common import config
 
 
-LOG = logging.getLogger(__name__)
-
-
 class QuantumFakeVMAgentLB(
         fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
     _BRIDGE_PREFIX = 'qfbr-'
