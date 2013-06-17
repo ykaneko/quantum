@@ -29,10 +29,8 @@ from quantum.plugins.openvswitch.common import config
 
 class QuantumFakeVMAgentOVS(
         fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
-    _BRIDGE_PREFIX = 'qfbr-'
-
     OPTS = [
-        cfg.StrOpt('vir_bridge', default=_BRIDGE_PREFIX + 'default',
+        cfg.StrOpt('vir_bridge', default='br-fakevm',
                    help='bridge name to emulate multiple node'),
         cfg.BoolOpt('use_tunnel', default=True,
                    help='use tunnel or not (set True when gre tunneling app)'),

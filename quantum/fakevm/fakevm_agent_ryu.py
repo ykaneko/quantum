@@ -30,10 +30,8 @@ from quantum.plugins.ryu.common import config
 
 class QuantumFakeVMAgentRyu(
         fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
-    _BRIDGE_PREFIX = 'qfbr-'
-
     OPTS = [
-        cfg.StrOpt('vir_bridge', default=_BRIDGE_PREFIX + 'default',
+        cfg.StrOpt('vir_bridge', default='br-fakevm',
                    help='bridge name to emulate multiple node'),
         cfg.BoolOpt('use_tunnel', default=True,
                    help='use tunnel or not (set True when gre tunneling app)'),
@@ -62,10 +60,6 @@ class QuantumFakeVMAgentRyu(
 
     def _get_vif_br_name(self, network_id, vif_uuid):
         return (self.conf.OVS.integration_bridge)
-
-    def _get_port_name(self):
-        return (self._BRIDGE_PREFIX +
-                self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
 
     def _init_bridge(self):
         br_name = self.conf.FAKEVM.vir_bridge
