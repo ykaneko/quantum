@@ -39,15 +39,16 @@ class QuantumFakeVMAgent(object):
     OPTS = [
         cfg.StrOpt('host',
                    default=socket.gethostname(),
-                   help='host name. default host'),
-        cfg.StrOpt('fakevm_agent_plugin', help='fakevm agent plugin'),
+                   help=_('host name. default host')),
+        cfg.StrOpt('fakevm_agent_plugin', help=_('fakevm agent plugin')),
     ]
 
     RPC_API_VERSION = '1.0'
 
     def __init__(self, conf):
         super(QuantumFakeVMAgent, self).__init__()
-        LOG.debug('host %s %s', conf.host, conf.FAKEVM.host)
+        LOG.debug('host %(default_host)s %(fakevm_host)s',
+                  {'default_host': conf.host, 'fakevm_host': conf.FAKEVM.host})
         self.conf = conf
         self.host = conf.FAKEVM.host
 
@@ -82,25 +83,33 @@ class QuantumFakeVMAgent(object):
 
     def plug(self, ctx, instance_id, network_id, vif_uuid, mac,
              bridge_name=None):
-        LOG.debug('plug ctx %s', ctx)
-        LOG.debug('plug %s %s %s %s %s',
-                  instance_id, network_id, vif_uuid, mac, bridge_name)
+        LOG.debug(_('plug ctx %s'), ctx)
+        LOG.debug(_('plug %(instance_id)s %(network_id)s %(vif_uuid)s '
+                    '%(mac)s %(bridge_name)s'),
+                  {'instance_id': instance_id, 'network_id': network_id,
+                   'vif_uuid': vif_uuid, 'mac': mac,
+                   'bridge_name': bridge_name})
         self.fakevm_agent_plugin.plug(instance_id, network_id, vif_uuid, mac,
                                       bridge_name)
 
     def unplug(self, ctx, network_id, vif_uuid, bridge_name=None):
-        LOG.debug('unplug ctx %s', ctx)
-        LOG.debug('unplug %s %s %s', network_id, vif_uuid, bridge_name)
+        LOG.debug(_('unplug ctx %s'), ctx)
+        LOG.debug(_('unplug %(network_id)s %(vif_uuid)s %(bridge_name)s'),
+                  {'network_id': network_id, 'vif_uuid': vif_uuid,
+                   'bridge_name': bridge_name})
         self.fakevm_agent_plugin.unplug(network_id, vif_uuid, bridge_name)
 
     def unplug_all_host(self, ctx, network_id, vif_uuid, bridge_name=None):
-        LOG.debug('unplug_all_host %s %s %s %s',
-                  ctx, network_id, vif_uuid, bridge_name)
+        LOG.debug(_('unplug_all_host %(context)s %(network_id)s %(vif_uuid)s '
+                    '%(bridge_name)s'),
+                  {'context': ctx, 'network_id': network_id,
+                   'vif_uuid': vif_uuid, 'bridge_name': bridge_name})
         self.unplug(ctx, network_id, vif_uuid, bridge_name)
 
     def exec_command(self, ctx, vif_uuid, command):
-        LOG.debug('exec_command ctx %s', ctx)
-        LOG.debug('exec_command %s %s', vif_uuid, command)
+        LOG.debug(_('exec_command ctx %s'), ctx)
+        LOG.debug(_('exec_command %(vif_uuid)s %(command)s'),
+                  {'vif_uuid': vif_uuid, 'command': command})
         return self.fakevm_agent_plugin.exec_command(vif_uuid, command)
 
 

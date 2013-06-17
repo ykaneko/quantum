@@ -140,7 +140,8 @@ class QuantumFakeVMAgentPluginBase(object):
         if self.vif_type == portbindings.VIF_TYPE_OVS:
             mapping['ovs_interfaceid'] = vif_uuid
         vif = (network, mapping)
-        LOG.debug('vif args: instance=%s vif=%s', instance, vif)
+        LOG.debug(_('vif args: instance=%(instance)s vif=%(vif)s'),
+                  {'instance': instance, 'vif': vif})
         return (instance, vif)
 
     def _exec_vif_wrapper(self, subcmd):
@@ -203,14 +204,16 @@ class QuantumFakeVMAgentPluginBase(object):
         br_name = self._get_probe_br_name(network_id, vif_uuid)
         ns_name = self._get_ns_name(vif_uuid)
         self._create_probe(br_veth_name, vm_veth_name, mac, br_name, ns_name)
-        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
+        LOG.debug(_('ns %(ns_name)s eth %(veth_name)s'),
+                  {'ns_name': ns_name, 'veth_name': vm_veth_name})
 
     def _probe_unplug(self, network_id, vif_uuid):
         br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
         br_name = self._get_probe_br_name(network_id, vif_uuid)
         ns_name = self._get_ns_name(vif_uuid)
         self._delete_probe(br_veth_name, vm_veth_name, br_name, ns_name)
-        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
+        LOG.debug(_('ns %(ns_name)s eth %(veth_name)s'),
+                  {'ns_name': ns_name, 'veth_name': vm_veth_name})
 
     def plug(self, instance_id, network_id, vif_uuid, mac, bridge_name=None):
         self._vif_plug(instance_id, network_id, vif_uuid, mac, bridge_name)

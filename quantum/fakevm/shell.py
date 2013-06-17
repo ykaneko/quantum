@@ -30,7 +30,6 @@ from quantum.fakevm import rpc as fakevm_rpc
 from quantum.common import topics
 from quantum.openstack.common import log as logging
 
-LOG = logging.getLogger(__name__)
 COMMAND_V2 = {
     'create-port': utils.import_class('quantum.fakevm.commands.CreatePort'),
     'delete-port': utils.import_class('quantum.fakevm.commands.DeletePort'),
@@ -67,7 +66,6 @@ class QuantumFakeVMShell(QuantumShell):
                 " either --config-file or env[QUANTUM_FAKEVM_CONFIG_FILE]")
         cfg.CONF(['--config-file', self.options.config_file])
         config.setup_logging(cfg.CONF)
-        #cfg.CONF.log_opt_values(LOG, std_logging.ERROR)
 
         self.fakevm_rpcapi = fakevm_rpc.FakeVMRpcApi(topics.FAKEVM_AGENT)
 
