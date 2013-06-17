@@ -69,8 +69,9 @@ class QuantumFakeVMAgentPluginBase(object):
     def _get_ns_name(self, vif_uuid):
         return 'fakevm-%s-%s' % (self.host, vif_uuid)
 
+    @abstractmethod
     def _get_vif_br_name(self, network_id, vif_uuid):
-        return self._exec_vif_wrapper(['bridge-name', vif_uuid])
+        pass
 
     def _get_probe_br_name(self, network_id, vif_uuid):
         return self._exec_vif_wrapper(['bridge-name', vif_uuid])
