@@ -103,6 +103,22 @@ class QuantumFakeVMAgentPluginBase(object):
         ovs_br.run_vsctl(['--', '--may-exist', 'add-br', ovs_bridge_name])
         return ovs_br
 
+    def _connect_ovs_lb(self, ovs_veth_name, br_veth_name, ovs_br, br_name):
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        ovs_veth, br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
+        ovs_br.add_port(ovs_veth_name)
+        self._execute(['brctl', 'addif', br_name, br_veth_name])
+        ovs_veth.link.set_up()
+        br_veth.link.set_up()
+
+    def _disconnect_ovs_lb(self, ovs_veth_name, br_veth_name, ovs_br, br_name):
+        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        ovs_veth, br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
+        self._execute(['brctl', 'delif', br_name, br_veth_name])
+        ovs_br.del_port(ovs_veth_name)
+        ovs_veth.link.set_down()
+        ovs_veth.link.delete()   # br_veth is also deleted.
+
     def _make_vif_args(self, instance_id, network_id, vif_uuid, mac,
                        bridge_name):
         instance = {
@@ -147,36 +163,31 @@ class QuantumFakeVMAgentPluginBase(object):
         cmd = ['unplug', str(instance), str(vif)]
         self._exec_vif_wrapper(cmd)
 
-    def _probe_plug(self, network_id, vif_uuid, mac):
-        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+    def _create_probe(self, br_veth_name, vm_veth_name, mac, br_name, ns_name):
         ip_wrapper = ip_lib.IPWrapper(self.root_helper)
         br_veth, vm_veth = ip_wrapper.add_veth(br_veth_name, vm_veth_name)
-        br_name = self._get_probe_br_name(network_id, vif_uuid)
-        self._execute(['brctl', 'addif', br_name, br_veth_name])
+        if br_name:
+            self._execute(['brctl', 'addif', br_name, br_veth_name])
 
         vm_veth.link.set_address(mac)
-        ns_name = self._get_ns_name(vif_uuid)
-        ns_obj = ip_wrapper.ensure_namespace(ns_name)
-        ns_obj.add_device_to_namespace(vm_veth)
+        if ns_name:
+            ns_obj = ip_wrapper.ensure_namespace(ns_name)
+            ns_obj.add_device_to_namespace(vm_veth)
 
         vm_veth.link.set_up()
         br_veth.link.set_up()
 
-        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
-
-    def _probe_unplug(self, network_id, vif_uuid):
-        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+    def _delete_probe(self, br_veth_name, vm_veth_name, br_name, ns_name):
         ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-        ns_name = self._get_ns_name(vif_uuid)
 
         if ip_lib.device_exists(br_veth_name, root_helper=self.root_helper):
             br_veth = ip_wrapper.device(br_veth_name)
             br_veth.link.set_down()
-            br_name = self._get_probe_br_name(network_id, vif_uuid)
-            self._execute(['brctl', 'delif', br_name, br_veth_name])
+            if br_name:
+                self._execute(['brctl', 'delif', br_name, br_veth_name])
             br_veth.link.delete()   # vm_veth is also deleted.
 
-        if ip_wrapper.netns.exists(ns_name):
+        if ns_name and ip_wrapper.netns.exists(ns_name):
             ip_wrapper_ns = ip_lib.IPWrapper(self.root_helper, ns_name)
             if ip_lib.device_exists(vm_veth_name, root_helper=self.root_helper,
                                     namespace=ns_name):
@@ -185,6 +196,18 @@ class QuantumFakeVMAgentPluginBase(object):
                 vm_veth.link.delete()
             ip_wrapper_ns.netns.delete(ns_name)
 
+    def _probe_plug(self, network_id, vif_uuid, mac):
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        br_name = self._get_probe_br_name(network_id, vif_uuid)
+        ns_name = self._get_ns_name(vif_uuid)
+        self._create_probe(br_veth_name, vm_veth_name, mac, br_name, ns_name)
+        LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
+
+    def _probe_unplug(self, network_id, vif_uuid):
+        br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        br_name = self._get_probe_br_name(network_id, vif_uuid)
+        ns_name = self._get_ns_name(vif_uuid)
+        self._delete_probe(br_veth_name, vm_veth_name, br_name, ns_name)
         LOG.debug('ns %s eth %s', ns_name, vm_veth_name)
 
     def plug(self, instance_id, network_id, vif_uuid, mac, bridge_name=None):
