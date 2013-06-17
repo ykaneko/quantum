@@ -126,36 +126,15 @@ class QuantumFakeVMAgentLB(
 
     def _probe_plug(self, network_id, vif_uuid, mac):
         br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
+        # linuxbridge plugin agent adds the interface having a name which
+        # starts with 'tap' to a bridge
         br_veth_name = self._get_tap_name(vif_uuid)
-        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-        br_veth, vm_veth = ip_wrapper.add_veth(br_veth_name, vm_veth_name)
-
-        vm_veth.link.set_address(mac)
         ns_name = self._get_ns_name(vif_uuid)
-        ns_obj = ip_wrapper.ensure_namespace(ns_name)
-        ns_obj.add_device_to_namespace(vm_veth)
-
-        vm_veth.link.set_up()
-        br_veth.link.set_up()
+        self._create_probe(br_veth_name, vm_veth_name, mac, None, ns_name)
 
     def _probe_unplug(self, network_id, vif_uuid):
         br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
         br_veth_name = self._get_tap_name(vif_uuid)
-        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+        br_name = self._get_vif_br_name(network_id, vif_uuid)
         ns_name = self._get_ns_name(vif_uuid)
-
-        if ip_lib.device_exists(br_veth_name, root_helper=self.root_helper):
-            br_veth = ip_wrapper.device(br_veth_name)
-            br_veth.link.set_down()
-            br_name = self._get_vif_br_name(network_id, vif_uuid)
-            self._execute(['brctl', 'delif', br_name, br_veth_name])
-            br_veth.link.delete()   # vm_veth is also deleted.
-
-        if ip_wrapper.netns.exists(ns_name):
-            ip_wrapper_ns = ip_lib.IPWrapper(self.root_helper, ns_name)
-            if ip_lib.device_exists(vm_veth_name, root_helper=self.root_helper,
-                                    namespace=ns_name):
-                vm_veth = ip_wrapper_ns.device(vm_veth_name)
-                vm_veth.link.set_down()
-                vm_veth.link.delete()
-            ip_wrapper_ns.netns.delete(ns_name)
+        self._delete_probe(br_veth_name, vm_veth_name, br_name, ns_name)

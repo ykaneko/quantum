@@ -71,20 +71,16 @@ class QuantumFakeVMAgentRyu(
         br_name = self.conf.FAKEVM.vir_bridge
         self._ensure_bridge(br_name)
         self.int_br = self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
-        ovs_veth_name = ('qfo-' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
-        br_veth_name = ('qfb-' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
-        ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-        ovs_veth, br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
-        self.int_br.add_port(ovs_veth_name)
-        self._execute(['brctl', 'addif', br_name, br_veth_name])
-        ovs_veth.link.set_up()
-        br_veth.link.set_up()
+        ovs_veth_name = ('qfo' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        br_veth_name = ('qfb' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        self._connect_ovs_lb(ovs_veth_name, br_veth_name, self.int_br, br_name)
 
     def _cleanup_bridge(self):
-        port_name = self._get_port_name()
-        self._execute(['brctl', 'delif',
-                       self.conf.FAKEVM.vir_bridge, port_name])
-        self.int_br.delete_port(port_name)
+        br_name = self.conf.FAKEVM.vir_bridge
+        ovs_veth_name = ('qfo' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        br_veth_name = ('qfb' + self.conf.FAKEVM.host)[:self.DEV_NAME_LEN]
+        self._disconnect_ovs_lb(ovs_veth_name, br_veth_name, self.int_br,
+                                br_name)
 
     def _init_tunnel(self):
         self._cleanup_tunnel()
@@ -94,7 +90,7 @@ class QuantumFakeVMAgentRyu(
         if not ip_lib.device_exists(dev_name, self.root_helper):
             # ip link add $tunnel_interface type dummy
             device = ip_wrapper.add_dummy(dev_name)
-        elif os.path.exists('/sys/devices/virtual/net/%s' % devname):
+        elif os.path.exists('/sys/devices/virtual/net/%s' % dev_name):
             device = ip_wrapper.device(dev_name)
         if device and self.conf.OVS.tunnel_ip:
             # ip address add $tunnel_ip brd '+' scope global dev $dev_name
