@@ -116,7 +116,7 @@ class QuantumFakeVMAgent(object):
 def main():
     eventlet.monkey_patch()
 
-    cfg.CONF.register_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
+    cfg.CONF.register_cli_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
     cfg.CONF(project='quantum')
     config.setup_logging(cfg.CONF)
 
