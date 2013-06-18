@@ -69,10 +69,18 @@ class QuantumFakeVMAgentPluginBase(object):
     def _get_ns_name(self, vif_uuid):
         return 'fakevm-%s-%s' % (self.host, vif_uuid)
 
+    # corresponds to
+    # nova.virt.libvirt.vif.LibvirtGenericVifDriver.get_bridge_name()
+    # return network['bridge']
+    # Not get_br_name()
     @abstractmethod
-    def _get_vif_br_name(self, network_id, vif_uuid):
+    def _get_vif_bridge_name(self, network_id, vif_uuid):
         pass
 
+    # corresponds to
+    # nova.virt.libvirt.vif.LibvirtGenericVifDriver.get_br_name()
+    # return ("qbr" + iface_id)[:network_model.NIC_NAME_LEN]
+    # Not get_bridge_name()
     def _get_probe_br_name(self, network_id, vif_uuid):
         return self._exec_vif_wrapper(['bridge-name', vif_uuid])
 
@@ -130,7 +138,7 @@ class QuantumFakeVMAgentPluginBase(object):
             'id': network_id,
         }
         if not bridge_name:
-            bridge_name = self._get_vif_br_name(network_id, vif_uuid)
+            bridge_name = self._get_vif_bridge_name(network_id, vif_uuid)
         network['bridge'] = bridge_name
         mapping = {
             'vif_type': self.vif_type,

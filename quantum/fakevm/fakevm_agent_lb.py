@@ -23,12 +23,9 @@ from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import utils
-from quantum.agent.linux.interface import LinuxInterfaceDriver as linux_if
 from quantum.common import utils as q_utils
 from quantum.extensions import portbindings
-from quantum.fakevm import fakevm_agent
 from quantum.fakevm import fakevm_agent_plugin_base
-from quantum.openstack.common import log as logging
 from quantum.plugins.linuxbridge.common import config
 
 
@@ -53,7 +50,7 @@ class QuantumFakeVMAgentLB(
     def cleanup(self):
         self._cleanup_bridge()
 
-    def _get_vif_br_name(self, network_id, vif_uuid):
+    def _get_vif_bridge_name(self, network_id, vif_uuid):
         return 'brq' + network_id[0:11]
 
     def _get_tap_name(self, device):
@@ -113,7 +110,7 @@ class QuantumFakeVMAgentLB(
     def _make_vif_args(self, instance_id, network_id, vif_uuid, mac,
                        bridge_name):
         if not bridge_name:
-            bridge_name = self._get_vif_br_name(network_id, vif_uuid)
+            bridge_name = self._get_vif_bridge_name(network_id, vif_uuid)
         interface, vif = super(QuantumFakeVMAgentLB, self)._make_vif_args(
             instance_id, network_id, vif_uuid, mac, bridge_name)
         network, mapping = vif
@@ -132,6 +129,6 @@ class QuantumFakeVMAgentLB(
     def _probe_unplug(self, network_id, vif_uuid):
         br_veth_name, vm_veth_name = self._get_veth_pair_names(vif_uuid)
         br_veth_name = self._get_tap_name(vif_uuid)
-        br_name = self._get_vif_br_name(network_id, vif_uuid)
+        br_name = self._get_vif_bridge_name(network_id, vif_uuid)
         ns_name = self._get_ns_name(vif_uuid)
         self._delete_probe(br_veth_name, vm_veth_name, br_name, ns_name)

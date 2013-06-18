@@ -21,9 +21,7 @@ import os.path
 from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
-from quantum.agent.linux import utils
 from quantum.extensions import portbindings
-from quantum.fakevm import fakevm_agent
 from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.plugins.ryu.common import config
 
@@ -58,8 +56,8 @@ class QuantumFakeVMAgentRyu(
         else:
             self._cleanup_bridge()
 
-    def _get_vif_br_name(self, network_id, vif_uuid):
-        return (self.conf.OVS.integration_bridge)
+    def _get_vif_bridge_name(self, network_id, vif_uuid):
+        return self.conf.OVS.integration_bridge
 
     def _init_bridge(self):
         br_name = self.conf.FAKEVM.vir_bridge
