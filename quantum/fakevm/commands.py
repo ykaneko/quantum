@@ -44,7 +44,7 @@ class FakeVMCommand(QuantumCommand):
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
         self.app.stdout.write(_('Unimplemented commands') + '\n')
 
     def _get_network(self, network_id):
@@ -252,7 +252,7 @@ class Unplug(FakeVMCommand):
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         host = parsed_args.host
         vif_uuid = parsed_args.vif_uuid
