@@ -16,7 +16,6 @@
 #    under the License.
 # @author: Isaku Yamahata
 
-import logging as std_logging
 import sys
 
 from oslo.config import cfg
@@ -28,7 +27,7 @@ from quantumclient.shell import env, QuantumShell, QUANTUM_API_VERSION
 from quantum.agent.common import config
 from quantum.fakevm import rpc as fakevm_rpc
 from quantum.common import topics
-from quantum.openstack.common import log as logging
+
 
 COMMAND_V2 = {
     'create-port': utils.import_class('quantum.fakevm.commands.CreatePort'),

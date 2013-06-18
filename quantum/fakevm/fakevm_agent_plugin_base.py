@@ -113,11 +113,11 @@ class QuantumFakeVMAgentPluginBase(object):
 
     def _disconnect_ovs_lb(self, ovs_veth_name, br_veth_name, ovs_br, br_name):
         ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-        ovs_veth, br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
+        ovs_veth, _br_veth = ip_wrapper.add_veth(ovs_veth_name, br_veth_name)
         self._execute(['brctl', 'delif', br_name, br_veth_name])
         ovs_br.del_port(ovs_veth_name)
         ovs_veth.link.set_down()
-        ovs_veth.link.delete()   # br_veth is also deleted.
+        ovs_veth.link.delete()   # _br_veth is also deleted.
 
     def _make_vif_args(self, instance_id, network_id, vif_uuid, mac,
                        bridge_name):

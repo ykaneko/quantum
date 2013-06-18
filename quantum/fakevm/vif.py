@@ -26,8 +26,6 @@ from oslo.config import cfg
 from nova.openstack.common import gettextutils
 gettextutils.install('fakevm-vif')
 
-from nova.network import model
-
 from quantum.openstack.common import importutils
 
 

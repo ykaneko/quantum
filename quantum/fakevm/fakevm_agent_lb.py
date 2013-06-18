@@ -19,12 +19,10 @@
 
 import sys
 
-from oslo.config import cfg
-
 from quantum.extensions import portbindings
 from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.openstack.common import log as logging
-from quantum.plugins.linuxbridge.common import config
+from quantum.plugins.linuxbridge.common import config  # noqa
 
 
 LOG = logging.getLogger(__name__)
