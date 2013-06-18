@@ -61,8 +61,8 @@ class QuantumFakeVMAgentOVS(
         else:
             self._cleanup_bridge()
 
-    def _get_vif_br_name(self, network_id, vif_uuid):
-        return (self.conf.OVS.integration_bridge)
+    def _get_vif_bridge_name(self, network_id, vif_uuid):
+        return self.conf.OVS.integration_bridge
 
     def _init_physical_bridge(self):
         for physical_network in self.bridge_mappings:
