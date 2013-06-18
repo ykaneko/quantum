@@ -40,7 +40,7 @@ class FakeVMCommand(QuantumCommand):
         parser = super(FakeVMCommand, self).get_parser(prog_name)
         parser.add_argument('--host',
                             default=socket.gethostname(),
-                            help='target host name')
+                            help=_('target host name'))
         return parser
 
     def run(self, parsed_args):
@@ -100,30 +100,32 @@ class CreatePort(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(CreatePort, self).get_parser(prog_name)
         parser.add_argument('network_id', metavar='network_id', type=str,
-                            help='ID of network')
+                            help=_('ID of network'))
         parser.add_argument('instance_id', metavar='instance_id', type=str,
-                            help='ID of instance')
+                            help=_('ID of instance'))
         parser.add_argument('bridge_name', metavar='bridge_name', type=str,
                             nargs='?', default=None,
-                            help='bridge name to plug')
+                            help=_('bridge name to plug'))
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
         host = parsed_args.host
 
         network = self._get_network(parsed_args.network_id)
-        self.log.debug('network %s', network)
+        self.log.debug(_('network %s'), network)
 
         port = self._create_port(network, parsed_args.instance_id)
-        self.log.debug('port %s', port)
+        self.log.debug(_('port %s'), port)
 
         self._plug(host, port, parsed_args.bridge_name)
         self.app.stdout.write(
-            _('VM port created on %s: vif_uuid: %s '
-              'mac: %s tenant_id: %s\nfixed_ips: %s\nnetowrk: %s\n') %
-            (host, port['id'], port['mac_address'], port['tenant_id'],
-             port['fixed_ips'], network))
+            _('VM port created on %(host)s: vif_uuid: %(vif_uuid)s '
+              'mac: %(mac)s tenant_id: %(tenant_id)s\nfixed_ips: %(fixed_ips)s'
+              '\nnetowrk: %(network)s\n') %
+            {'host': host, 'vif_uuid': port['id'], 'mac': port['mac_address'],
+             'tenant_id': port['tenant_id'], 'fixed_ips': port['fixed_ips'],
+             'network': network})
 
 
 class DeletePort(FakeVMCommand):
@@ -134,15 +136,15 @@ class DeletePort(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(DeletePort, self).get_parser(prog_name)
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         parser.add_argument('bridge_name', metavar='bridge_name', type=str,
                             nargs='?', default=None,
-                            help='bridge name to plug')
+                            help=_('bridge name to plug'))
         return parser
 
     def run(self, parsed_args):
         # TODO:XXX use fanout to unplug on all hosts
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         host = parsed_args.host
         vif_uuid = parsed_args.vif_uuid
@@ -163,28 +165,29 @@ class Migrate(FakeVMCommand):
         parser = super(Migrate, self).get_parser(prog_name)
         parser.add_argument('--src-bridge-name', metavar='src_bridge_name',
                             default=None,
-                            help='bridge name to unplug on src host')
+                            help=_('bridge name to unplug on src host'))
         parser.add_argument('--dst-bridge-name', metavar='dst_bridge_name',
                             default=None,
-                            help='bridge name to plug on dst host')
+                            help=_('bridge name to plug on dst host'))
         parser.add_argument('dst_host', metavar='dst_host', type=str,
-                            default=None, help='destination host to migrate')
+                            default=None,
+                            help=_('destination host to migrate'))
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         return parser
 
     def run(self, parsed_args):
         # TODO:XXX use fanout to unplug on all hosts
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         dst_host = parsed_args.dst_host
         if not dst_host:
-            raise ValueError('destination host is not specified')
+            raise ValueError(_('destination host is not specified'))
 
         src_host = parsed_args.host
         if dst_host == src_host:
-            raise ValueError('destination host must differ from current host '
-                             '%s' % src_host)
+            raise ValueError(_('destination host must differ from current '
+                               'host %s') % src_host)
 
         vif_uuid = parsed_args.vif_uuid
         port = self._show_port(vif_uuid)
@@ -193,8 +196,10 @@ class Migrate(FakeVMCommand):
         # start dhcp client?
 
         self._unplug(src_host, port, parsed_args.src_bridge_name)
-        self.app.stdout.write(_('VM migrate : %s %s -> %s\n') %
-                              (vif_uuid, src_host, dst_host))
+        self.app.stdout.write(_('VM migrate : %(vif_uuid)s %(src_host)s -> '
+                                '%(dst_host)s\n') %
+                              {'vif_uuid': vif_uuid, 'src_host': src_host,
+                               'dst_host': dst_host})
 
 
 class Plug(FakeVMCommand):
@@ -205,14 +210,14 @@ class Plug(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(Plug, self).get_parser(prog_name)
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         parser.add_argument('bridge_name', metavar='bridge_name', type=str,
                             nargs='?', default=None,
-                            help='bridge name to plug')
+                            help=_('bridge name to plug'))
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         host = parsed_args.host
         vif_uuid = parsed_args.vif_uuid
@@ -220,12 +225,16 @@ class Plug(FakeVMCommand):
 
         self._plug(host, port, parsed_args.bridge_name)
         self.app.stdout.write(
-            _('VM port pluged on %s %s: vif_uuid: %s '
-              'mac: %s tenant_id: %s instance_id %s\n'
-              'fixed_ips: %s\n') %
-            (host, parsed_args.bridge_name,
-             vif_uuid, port['mac_address'], port['tenant_id'],
-             port['instance_id'], port['fixed_ips']))
+            _('VM port pluged on %(host)s %(bridge)s: '
+              'vif_uuid: %(vif_uuid)s mac: %(mac)s '
+              'tenant_id: %(tenant_id)s '
+              'instance_id %(instance_id)s\n'
+              'fixed_ips: %(fixed_ips)s\n') %
+            {'host': host, 'bridge': parsed_args.bridge_name,
+             'vif_uuid': vif_uuid, 'mac': port['mac_address'],
+             'tenant_id': port['tenant_id'],
+             'instance_id': port['instance_id'],
+             'fixed_ips': port['fixed_ips']})
 
 
 class Unplug(FakeVMCommand):
@@ -236,10 +245,10 @@ class Unplug(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(Unplug, self).get_parser(prog_name)
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         parser.add_argument('bridge_name', metavar='bridge_name', type=str,
                             nargs='?', default=None,
-                            help='bridge name to plug')
+                            help=_('bridge name to plug'))
         return parser
 
     def run(self, parsed_args):
@@ -250,8 +259,10 @@ class Unplug(FakeVMCommand):
         port = self._show_port(vif_uuid)
 
         self._unplug(host, port, parsed_args.bridge_name)
-        self.app.stdout.write(_('VM port unpluged on %s: %s %s\n') %
-                              (host, vif_uuid, parsed_args.bridge_name))
+        self.app.stdout.write(_('VM port unpluged on %(host)s: %(vif_uuid)s '
+                                '%(bridge)s\n') %
+                              {'host': host, 'vif_uuid': vif_uuid,
+                               'bridge': parsed_args.bridge_name})
 
 
 class UnplugAllHost(FakeVMCommand):
@@ -262,14 +273,14 @@ class UnplugAllHost(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(UnplugAllHost, self).get_parser(prog_name)
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         parser.add_argument('bridge_name', metavar='bridge_name', type=str,
                             nargs='?', default=None,
-                            help='bridge name to plug')
+                            help=_('bridge name to plug'))
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         vif_uuid = parsed_args.vif_uuid
         port = self._show_port(vif_uuid)
@@ -279,8 +290,11 @@ class UnplugAllHost(FakeVMCommand):
         ctx = context.get_admin_context_without_session()
         fakevm_rpcapi.unplug_all_host(ctx, network_id, vif_uuid,
                                       parsed_args.bridge_name)
-        self.app.stdout.write(_('VM port unpluged on all host: %s %s %s\n') %
-                              (network_id, vif_uuid, parsed_args.bridge_name))
+        self.app.stdout.write(_('VM port unpluged on all host: %(network_id)s '
+                                '%(vif_uuid)s %(bridge)s\n') %
+                              {'network_id': network_id,
+                               'vif_uuid': vif_uuid,
+                               'bridge': parsed_args.bridge_name})
 
 
 class ExecCommand(FakeVMCommand):
@@ -291,19 +305,22 @@ class ExecCommand(FakeVMCommand):
     def get_parser(self, prog_name):
         parser = super(ExecCommand, self).get_parser(prog_name)
         parser.add_argument('vif_uuid', metavar='vif_uuid', type=str,
-                            help='ID of vif')
+                            help=_('ID of vif'))
         parser.add_argument('command', metavar='command',
                             nargs='?', default=None,
-                            help='command to execute for vif')
+                            help=_('command to execute for vif'))
         return parser
 
     def run(self, parsed_args):
-        self.log.debug('run(%s)' % parsed_args)
+        self.log.debug(_('run(%s)'), parsed_args)
 
         fakevm_rpcapi = self.get_fakevm_rpcapi()
         ctx = context.get_admin_context_without_session()
         result = fakevm_rpcapi.exec_command(
             ctx, parsed_args.host, parsed_args.vif_uuid, parsed_args.command)
-        self.app.stdout.write(_('VM port executeon %s: %s %s\n%s\n') %
-                              (parsed_args.host, parsed_args.vif_uuid,
-                               parsed_args.command, result))
+        self.app.stdout.write(_('VM port executeon %(host)s: %(vif_uuid)s '
+                                '%(command)s\n%(result)s\n') %
+                              {'host': parsed_args.host,
+                               'vif_uuid': parsed_args.vif_uuid,
+                               'command': parsed_args.command,
+                               'result': result})
