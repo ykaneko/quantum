@@ -47,24 +47,6 @@ class QuantumFakeVMVifWrapper(object):
         sys.stderr.write(_('unknown command') + '\n')
         sys.exit(1)
 
-    def _make_args(self, cmd):
-        instance = {
-            'host': cmd.vif_host,
-            'uuid': cmd.instance_id,
-        }
-        network = {}
-        if cmd.bridge_name:
-            network['bridge'] = cmd.bridge_name
-        mapping = {
-            'vif_type': cmd.vif_type,
-            'vif_uuid': cmd.vif_uuid,
-            'mac': cmd.mac,
-        }
-        if cmd.vif_type == model.VIF_TYPE_OVS:
-            mapping['ovs_interfaceid'] = cmd.vif_uuid
-        vif = (network, mapping)
-        return (instance, vif)
-
     def _plug(self, cmd):
         instance = ast.literal_eval(cmd.instance)
         vif = ast.literal_eval(cmd.vif)
