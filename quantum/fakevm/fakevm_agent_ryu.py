@@ -29,9 +29,10 @@ class QuantumFakeVMAgentRyu(
         fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
     OPTS = [
         cfg.StrOpt('vir_bridge', default='br-fakevm',
-                   help='bridge name to emulate multiple node'),
+                   help=_('bridge name to emulate multiple node')),
         cfg.BoolOpt('use_tunnel', default=True,
-                    help='use tunnel or not(set True when gre tunneling app)'),
+                   help=_('use tunnel or not (set True when gre tunneling '
+                          'app)')),
     ]
 
     def __init__(self):

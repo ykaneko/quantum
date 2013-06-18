@@ -47,7 +47,7 @@ class QuantumFakeVMAgent(object):
 
     def __init__(self, conf):
         super(QuantumFakeVMAgent, self).__init__()
-        LOG.debug('host %(default_host)s %(fakevm_host)s',
+        LOG.debug(_('host %(default_host)s %(fakevm_host)s'),
                   {'default_host': conf.host, 'fakevm_host': conf.FAKEVM.host})
         self.conf = conf
         self.host = conf.FAKEVM.host

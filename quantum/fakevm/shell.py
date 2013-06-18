@@ -54,15 +54,15 @@ class QuantumFakeVMShell(QuantumShell):
         parser.add_argument(
             '--config-file',
             default=env('QUANTUM_FAKEVM_CONFIG_FILE'),
-            help='Config file for fakevm shell ')
+            help=_('Config file for fakevm shell '))
         return parser
 
     def initialize_app(self, argv):
         super(QuantumFakeVMShell, self).initialize_app(argv)
         if not self.options.config_file:
             raise exc.CommandError(
-                "You must provide a config file for bridge -"
-                " either --config-file or env[QUANTUM_FAKEVM_CONFIG_FILE]")
+                _('You must provide a config file for bridge -'
+                  ' either --config-file or env[QUANTUM_FAKEVM_CONFIG_FILE]'))
         cfg.CONF(['--config-file', self.options.config_file])
         config.setup_logging(cfg.CONF)
 
