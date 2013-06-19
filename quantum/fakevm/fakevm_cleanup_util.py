@@ -31,7 +31,7 @@ AGENT_OPTS = [
 
 _BRIDGE_PATTERN = '^qbr.*'
 _OVS_PORT_PATTERN = '^qvo.*'                    # this will also delete qvb
-_FAKEVM_INTERFACE_PATTERN = '^(qfb|qvb).+'      # this will also delete qfv
+_FAKEVM_INTERFACE_PATTERN = '^(qft|qfb|qvb).+'  # this will also delete qfv
 _FAKEVM_NS_PATTERN = '^fakevm-.+-.+'
 
 
