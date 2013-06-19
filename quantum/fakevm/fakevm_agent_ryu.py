@@ -16,13 +16,12 @@
 #    under the License.
 # @author: Isaku Yamahata
 
-import os.path
-
 from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
 from quantum.extensions import portbindings
 from quantum.fakevm import fakevm_agent_plugin_base
+from quantum.plugins.ryu.agent import ryu_quantum_agent
 from quantum.plugins.ryu.common import config
 
 
@@ -32,7 +31,7 @@ class QuantumFakeVMAgentRyu(
         cfg.StrOpt('vir_bridge', default='br-fakevm',
                    help='bridge name to emulate multiple node'),
         cfg.BoolOpt('use_tunnel', default=True,
-                   help='use tunnel or not (set True when gre tunneling app)'),
+                    help='use tunnel or not(set True when gre tunneling app)'),
     ]
 
     def __init__(self):
@@ -74,33 +73,35 @@ class QuantumFakeVMAgentRyu(
         self._disconnect_ovs_lb(ovs_veth_name, br_veth_name, self.int_br,
                                 br_name)
 
+    def _get_tunnel_name(self):
+        # host name can have similar leading part. e.g. guest-1, guest-2
+        # use the trailing part in order to avoid name clash
+        return 'qft' + self.host[-self.DEV_NAME_LEN + 3:]
+
     def _init_tunnel(self):
         self._cleanup_tunnel()
-        dev_name = self.conf.OVS.tunnel_interface
+
+        dev_name = self._get_tunnel_name()
+        tunnel_ip = ryu_quantum_agent._get_tunnel_ip()
         ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-        device = None
         if not ip_lib.device_exists(dev_name, self.root_helper):
             # ip link add $tunnel_interface type dummy
             device = ip_wrapper.add_dummy(dev_name)
-        elif os.path.exists('/sys/devices/virtual/net/%s' % dev_name):
+        else:
             device = ip_wrapper.device(dev_name)
-        if device and self.conf.OVS.tunnel_ip:
-            # ip address add $tunnel_ip brd '+' scope global dev $dev_name
-            device.addr.add(4, self.conf.OVS.tunnel_ip, '+')
-            # ip link set $tunnel_interface up
-            device.link.set_up()
-            self._execute(['ip', 'route', 'add', self.conf.OVS.tunnel_ip,
-                           'dev', dev_name])
+        # ip address add $tunnel_ip brd '+' scope global dev $dev_name
+        device.addr.add(4, tunnel_ip, '+')
+        # ip link set $tunnel_interface up
+        device.link.set_up()
+        #self._execute(['ip', 'route', 'add', tunnel_ip, 'dev', dev_name])
 
         self._ensure_ovs_bridge(self.conf.OVS.integration_bridge)
 
     def _cleanup_tunnel(self):
-        dev_name = self.conf.OVS.tunnel_interface
-        if dev_name and self.conf.OVS.tunnel_ip:
-            if (ip_lib.device_exists(dev_name, self.root_helper) and
-                os.path.exists('/sys/devices/virtual/net/%s' % dev_name)):
-                ip_wrapper = ip_lib.IPWrapper(self.root_helper)
-                ip_wrapper.device(dev_name).link.delete()
+        dev_name = self._get_tunnel_name()
+        if ip_lib.device_exists(dev_name, self.root_helper):
+            ip_wrapper = ip_lib.IPWrapper(self.root_helper)
+            ip_wrapper.device(dev_name).link.delete()
 
 
 cfg.CONF.register_opts(QuantumFakeVMAgentRyu.OPTS, 'FAKEVM')
