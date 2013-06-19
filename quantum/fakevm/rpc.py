@@ -74,7 +74,7 @@ class FakeVMRpcApi(proxy.RpcProxy):
                          topic=self.get_topic_name(self.topic, host))
 
     def unplug_all_host(self, context, network_id, vif_uuid, bridge_name):
-        """unplug on all host"""
+        """unplug on all host."""
         self.LOG.debug(_('ctxt %(context)s vif_uuid %(vif_uuid)s'),
                        {'context': context, 'vif_uuid': vif_uuid})
         return self.fanout_cast(context,

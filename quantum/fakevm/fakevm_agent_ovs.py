@@ -33,8 +33,8 @@ class QuantumFakeVMAgentOVS(
         cfg.StrOpt('vir_bridge', default='br-fakevm',
                    help=_('bridge name to emulate multiple node')),
         cfg.BoolOpt('use_tunnel', default=True,
-                   help=_('use tunnel or not (set True when gre tunneling '
-                          'app)')),
+                    help=_('use tunnel or not (set True when gre tunneling '
+                           'app)')),
         cfg.StrOpt('tunnel_interface', default=None,
                    help=_('Tunnel interface to use')),
     ]

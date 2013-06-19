@@ -25,8 +25,8 @@ from quantumclient.common import utils
 from quantumclient.shell import env, QuantumShell, QUANTUM_API_VERSION
 
 from quantum.agent.common import config
-from quantum.fakevm import rpc as fakevm_rpc
 from quantum.common import topics
+from quantum.fakevm import rpc as fakevm_rpc
 
 
 COMMAND_V2 = {
