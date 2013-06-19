@@ -20,8 +20,8 @@ import socket
 
 from quantumclient.quantum.v2_0 import QuantumCommand
 
-from quantum.openstack.common import log as logging
 from quantum import context
+from quantum.openstack.common import log as logging
 
 
 _DEVICE_OWNER_FAKEVM = 'qfakevm:vmport:%s'
@@ -93,7 +93,7 @@ class FakeVMCommand(QuantumCommand):
 
 
 class CreatePort(FakeVMCommand):
-    """create VM port"""
+    """create VM port."""
 
     log = logging.getLogger(__name__ + '.CreatePort')
 
@@ -129,7 +129,7 @@ class CreatePort(FakeVMCommand):
 
 
 class DeletePort(FakeVMCommand):
-    """delete VM port"""
+    """delete VM port."""
 
     log = logging.getLogger(__name__ + '.DeletePort')
 
@@ -157,7 +157,7 @@ class DeletePort(FakeVMCommand):
 
 
 class Migrate(FakeVMCommand):
-    """Migrate vif"""
+    """Migrate vif."""
 
     log = logging.getLogger(__name__ + '.Migrate')
 
@@ -203,7 +203,7 @@ class Migrate(FakeVMCommand):
 
 
 class Plug(FakeVMCommand):
-    """plug vif"""
+    """plug vif."""
 
     log = logging.getLogger(__name__ + '.Plug')
 
@@ -238,7 +238,7 @@ class Plug(FakeVMCommand):
 
 
 class Unplug(FakeVMCommand):
-    """unplug vif"""
+    """unplug vif."""
 
     log = logging.getLogger(__name__ + '.Unplug')
 
@@ -266,7 +266,7 @@ class Unplug(FakeVMCommand):
 
 
 class UnplugAllHost(FakeVMCommand):
-    """unplug vif on all host"""
+    """unplug vif on all host."""
 
     log = logging.getLogger(__name__ + '.UnplugAllHost')
 
@@ -298,7 +298,7 @@ class UnplugAllHost(FakeVMCommand):
 
 
 class ExecCommand(FakeVMCommand):
-    """execute on the interface"""
+    """execute on the interface."""
 
     log = logging.getLogger(__name__ + '.ExecCommand')
 

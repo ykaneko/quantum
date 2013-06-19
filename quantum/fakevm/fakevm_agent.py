@@ -23,13 +23,12 @@ import socket
 from oslo.config import cfg
 
 from quantum.agent.common import config
-from quantum.common import config
 from quantum.common import topics
+from quantum.fakevm import rpc as fakevm_rpc
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
 from quantum.openstack.common.rpc import dispatcher
-from quantum.fakevm import rpc as fakevm_rpc
 
 
 LOG = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ class QuantumFakeVMAgent(object):
         self.fakevm_agent_plugin = importutils.import_object(
             conf.FAKEVM.fakevm_agent_plugin)
         self.fakevm_agent_plugin.init(conf)
-        self.root_helper = conf.AGENT.root_helper
+        self.root_helper = config.get_root_helper(self.conf)
 
         self.setup_rpc()
 
@@ -117,6 +116,8 @@ def main():
     eventlet.monkey_patch()
 
     cfg.CONF.register_cli_opts(QuantumFakeVMAgent.OPTS, 'FAKEVM')
+    config.register_agent_state_opts_helper(cfg.CONF)
+    config.register_root_helper(cfg.CONF)
     cfg.CONF(project='quantum')
     config.setup_logging(cfg.CONF)
 
