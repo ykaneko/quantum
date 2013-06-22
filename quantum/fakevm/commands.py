@@ -143,7 +143,7 @@ class DeletePort(FakeVMCommand):
         return parser
 
     def run(self, parsed_args):
-        # TODO:XXX use fanout to unplug on all hosts
+        # TODO(yamahata):XXX use fanout to unplug on all hosts
         self.log.debug(_('run(%s)'), parsed_args)
 
         host = parsed_args.host
@@ -177,7 +177,7 @@ class Migrate(FakeVMCommand):
         return parser
 
     def run(self, parsed_args):
-        # TODO:XXX use fanout to unplug on all hosts
+        # TODO(yamahata):XXX use fanout to unplug on all hosts
         self.log.debug(_('run(%s)'), parsed_args)
 
         dst_host = parsed_args.dst_host
@@ -192,7 +192,7 @@ class Migrate(FakeVMCommand):
         vif_uuid = parsed_args.vif_uuid
         port = self._show_port(vif_uuid)
         self._plug(dst_host, port, parsed_args.dst_bridge_name)
-        # TODO: send GARP packet on dst_host
+        # TODO(yamahata): send GARP packet on dst_host
         # start dhcp client?
 
         self._unplug(src_host, port, parsed_args.src_bridge_name)

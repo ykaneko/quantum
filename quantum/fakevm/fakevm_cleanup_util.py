@@ -90,6 +90,6 @@ def main():
                 ip_lib.IPWrapper.get_namespaces(conf.AGENT.root_helper)
                 if is_fakevm_ns(ns)]
     for ns_name in ns_names:
-        # TODO kill dhcp client
+        # TODO(yamahata): kill dhcp client
         print ns_name
         ip_wrapper.netns.delete(ns_name)
