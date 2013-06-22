@@ -95,14 +95,10 @@ class QuantumFakeVMAgentPluginBase(object):
 
     def _ensure_bridge(self, br_name):
         if not self._device_exists(br_name):
-            if self._execute(['brctl', 'addbr', br_name]):
-                raise RuntimeError('brctl addbr %s failed' % br_name)
-            if self._execute(['brctl', 'setfd', br_name, str(0)]):
-                raise RuntimeError('brctl setfd %s 0 failed' % br_name)
-            if self._execute(['brctl', 'stp', br_name, 'off']):
-                raise RuntimeError('brctl stp %s off failed' % br_name)
-            if self._execute(['ip', 'link', 'set', br_name, 'up']):
-                raise RuntimeError('ip link set %s up failed' % br_name)
+            self._execute(['brctl', 'addbr', br_name])
+            self._execute(['brctl', 'setfd', br_name, str(0)])
+            self._execute(['brctl', 'stp', br_name, 'off'])
+            self._execute(['ip', 'link', 'set', br_name, 'up'])
         else:
             time.sleep(1)       # XXX: race
 
