@@ -57,10 +57,11 @@ class QuantumFakeVMAgentOVS(
                 self._init_bridge()
 
     def cleanup(self):
-        if self.conf.FAKEVM.use_tunnel:
-            self._cleanup_tunnel()
-        else:
-            self._cleanup_bridge()
+        if self.conf.FAKEVM.allow_multi_node_emulate:
+            if self.conf.FAKEVM.use_tunnel:
+                self._cleanup_tunnel()
+            else:
+                self._cleanup_bridge()
 
     def _get_vif_bridge_name(self, network_id, vif_uuid):
         return self.conf.OVS.integration_bridge
