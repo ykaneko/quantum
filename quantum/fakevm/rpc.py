@@ -40,7 +40,7 @@ class FakeVMRpcApi(proxy.RpcProxy):
 
     def __init__(self, topic):
         self.topic = topic
-        LOG.error(_('topic %s'), self.topic)
+        LOG.debug(_('topic %s'), self.topic)
         super(FakeVMRpcApi, self).__init__(
             topic=topic, default_version=self.BASE_RPC_API_VERSION)
 
