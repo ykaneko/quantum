@@ -28,6 +28,11 @@ class TestFakeVMAgent(base.BaseTestCase):
     def setUp(self):
         super(TestFakeVMAgent, self).setUp()
         self.addCleanup(mock.patch.stopall)
+
+        self.mock_cfg = mock.patch(_AGENT_NAME + '.cfg').start()
+        self.mock_conf = mock.Mock()
+        self.mock_cfg.CONF = self.mock_conf
+
         self.agent_config = mock.patch(_AGENT_NAME + '.config').start()
         self.fakevm_rpc = mock.patch(_AGENT_NAME + '.fakevm_rpc').start()
         self.rpc_api = mock.Mock()
@@ -158,4 +163,29 @@ class TestFakeVMAgent(base.BaseTestCase):
         self.agent_plugin.assert_has_calls([
             mock.call.init(self.conf),
             mock.call.exec_command(*expected)
+        ])
+
+    def test_main(self):
+        agent = mock.Mock()
+
+        with mock.patch(_AGENT_NAME + '.QuantumFakeVMAgent',
+                        return_value=agent) as mock_agent:
+            fakevm_agent.main()
+
+        self.mock_conf.assert_has_calls([
+            mock.call.register_cli_opts(mock_agent.OPTS, 'FAKEVM'),
+        ])
+        self.agent_config.assert_has_calls([
+            mock.call.register_agent_state_opts_helper(self.mock_conf),
+            mock.call.register_root_helper(self.mock_conf),
+            mock.call.setup_logging(self.mock_conf)
+        ])
+        self.mock_cfg.assert_has_calls([
+            mock.call.CONF(project='quantum')
+        ])
+        mock_agent.assert_has_calls([
+            mock.call(self.mock_conf)
+        ])
+        agent.assert_has_calls([
+            mock.call.wait_rpc()
         ])
