@@ -50,14 +50,14 @@ class QuantumFakeVMAgentOVS(
         self.vif_type = portbindings.VIF_TYPE_OVS
         self.bridge_mappings = q_utils.parse_mappings(
             cfg.CONF.OVS.bridge_mappings)
-        if self.conf.FAKEVM.allow_multi_node_emulate:
+        if self.conf.FAKEVM.enable_multi_node_emulate:
             if self.conf.FAKEVM.use_tunnel:
                 self._init_tunnel()
             else:
                 self._init_bridge()
 
     def cleanup(self):
-        if self.conf.FAKEVM.allow_multi_node_emulate:
+        if self.conf.FAKEVM.enable_multi_node_emulate:
             if self.conf.FAKEVM.use_tunnel:
                 self._cleanup_tunnel()
             else:

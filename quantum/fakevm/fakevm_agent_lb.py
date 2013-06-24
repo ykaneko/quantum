@@ -42,7 +42,7 @@ class QuantumFakeVMAgentLB(
         # The bridge created by linuxbridge plugin is named by fixed prefix
         # plus network-id. Therefore, this plug-in cannot support the multi
         # node emulation because it cannot avoid a bridge name conflicts.
-        if self.conf.FAKEVM.allow_multi_node_emulate:
+        if self.conf.FAKEVM.enable_multi_node_emulate:
             LOG.error(_('FakeVM linuxbridge plugin does not support '
                         'the multi node emulation.'))
             sys.exit(1)

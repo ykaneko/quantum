@@ -42,7 +42,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
     def mock_plugin(self):
         self.conf = mock.Mock()
         self.conf.AGENT.root_helper = 'roothelper'
-        self.conf.FAKEVM.allow_multi_node_emulate = False
+        self.conf.FAKEVM.enable_multi_node_emulate = False
         self.conf.FAKEVM.host = 'host1'
         self.conf.FAKEVM.vir_bridge = 'brfakevm'
         self.conf.OVS.integration_bridge = 'brint'
@@ -63,7 +63,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
     def test_init_to_tunnel(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -77,7 +77,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
     def test_init_to_bridge(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -107,7 +107,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
     def test_cleanup_to_tunnel(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -125,7 +125,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
     def test_cleanup_to_bridge(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -157,7 +157,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_ensure_bridge'),
@@ -181,7 +181,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_ensure_bridge'),
@@ -229,7 +229,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.add_dummy = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_cleanup_tunnel'),
@@ -269,7 +269,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_cleanup_tunnel'),
@@ -309,7 +309,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         plugin.init(self.conf)
 
@@ -340,7 +340,7 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         plugin.init(self.conf)
 

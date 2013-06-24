@@ -33,7 +33,7 @@ class TestFakeVMAgentLB(base.BaseTestCase):
 
     def mock_plugin(self):
         self.conf = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = False
+        self.conf.FAKEVM.enable_multi_node_emulate = False
         self.conf.FAKEVM.host = 'host1'
         return self.mod_plugin.QuantumFakeVMAgentLB()
 
@@ -44,7 +44,7 @@ class TestFakeVMAgentLB(base.BaseTestCase):
 
     def test_init_multi_node_mode(self):
         plugin = self.mock_plugin()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
 
         self.assertRaises(SystemExit, plugin.init, self.conf)
 

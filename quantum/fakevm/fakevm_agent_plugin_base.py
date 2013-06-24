@@ -40,8 +40,8 @@ class QuantumFakeVMAgentPluginBase(object):
     OPTS = [
         cfg.StrOpt('nova_conf', default='/etc/nova/nova.conf',
                    help=_('path to nova.conf')),
-        cfg.BoolOpt('allow_multi_node_emulate', default=False,
-                    help=_('Allow the multiple node emulation')),
+        cfg.BoolOpt('enable_multi_node_emulate', default=False,
+                    help=_('Enable the multiple node emulation')),
     ]
 
     DEV_NAME_LEN = 13   # NOTE(yamahata): for dhclient
