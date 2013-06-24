@@ -40,7 +40,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def mock_plugin(self):
         self.conf = mock.Mock()
         self.conf.AGENT.root_helper = 'roothelper'
-        self.conf.FAKEVM.allow_multi_node_emulate = False
+        self.conf.FAKEVM.enable_multi_node_emulate = False
         self.conf.FAKEVM.host = 'host1'
         self.conf.FAKEVM.vir_bridge = 'brfakevm'
         self.conf.FAKEVM.tunnel_interface = 'tunfv'
@@ -62,7 +62,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_init_to_tunnel(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -76,7 +76,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_init_to_bridge(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -106,7 +106,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_cleanup_to_tunnel(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -124,7 +124,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_cleanup_to_bridge(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -285,7 +285,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(self.q_utils, 'parse_mappings',
@@ -315,7 +315,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(self.q_utils, 'parse_mappings',
@@ -341,7 +341,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(self.q_utils, 'parse_mappings',
@@ -369,7 +369,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         ovs_br = mock.Mock()
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = False
         with nested(
             mock.patch.object(self.q_utils, 'parse_mappings',
@@ -394,7 +394,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.add_dummy = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         self.conf.OVS.local_ip = '1.2.3.4'
         with nested(
@@ -427,7 +427,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         self.conf.OVS.local_ip = '1.2.3.4'
         with nested(
@@ -457,7 +457,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_init_tunnel_no_devname(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         self.conf.FAKEVM.tunnel_interface = None
         with nested(
@@ -477,7 +477,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.add_dummy = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         self.conf.OVS.local_ip = None
         with nested(
@@ -508,7 +508,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -539,7 +539,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
         ip_wrapper = mock.Mock()
         device = mock.Mock()
         ip_wrapper.device = mock.Mock(return_value=device)
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         with nested(
             mock.patch.object(plugin, '_init_tunnel'),
@@ -561,7 +561,7 @@ class TestFakeVMAgentOVS(base.BaseTestCase):
     def test_cleanup_tunnel_no_devname(self):
         plugin = self.mock_plugin()
 
-        self.conf.FAKEVM.allow_multi_node_emulate = True
+        self.conf.FAKEVM.enable_multi_node_emulate = True
         self.conf.FAKEVM.use_tunnel = True
         self.conf.FAKEVM.tunnel_interface = None
         with nested(
