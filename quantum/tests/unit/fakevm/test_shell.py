@@ -15,7 +15,7 @@
 
 import mock
 
-from quantum.fakevm import shell
+from quantum.debug.fakevm import shell
 from quantum.tests import base
 
 
@@ -25,10 +25,12 @@ class TestFakeVMShell(base.BaseTestCase):
         self.addCleanup(mock.patch.stopall)
 
         self.mock_conf = mock.Mock()
-        self.mock_cfg = mock.patch('quantum.fakevm.shell.cfg').start()
+        self.mock_cfg = mock.patch('quantum.debug.fakevm.shell.cfg').start()
         self.mock_cfg.CONF = self.mock_conf
-        self.mock_config = mock.patch('quantum.fakevm.shell.config').start()
-        self.mock_rpc = mock.patch('quantum.fakevm.shell.fakevm_rpc').start()
+        self.mock_config = mock.patch(
+            'quantum.debug.fakevm.shell.config').start()
+        self.mock_rpc = mock.patch(
+            'quantum.debug.fakevm.shell.fakevm_rpc').start()
 
     def test_init(self):
         shell.QuantumFakeVMShell('2.0')

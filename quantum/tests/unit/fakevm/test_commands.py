@@ -17,7 +17,7 @@
 
 import mock
 
-from quantum.fakevm import commands
+from quantum.debug.fakevm import commands
 from quantum.tests import base
 
 

@@ -40,9 +40,9 @@ class TestFakeVMVif(base.BaseTestCase):
         super(TestFakeVMVif, self).setUp()
         self.addCleanup(mock.patch.stopall)
         self.nova = patch_fake_nova().start()
-        self.mod_vif = importutils.import_module('quantum.fakevm.vif')
+        self.mod_vif = importutils.import_module('quantum.debug.fakevm.vif')
 
-        self.mock_cfg = mock.patch('quantum.fakevm.vif.cfg').start()
+        self.mock_cfg = mock.patch('quantum.debug.fakevm.vif.cfg').start()
         self.mock_conf = mock.Mock()
         self.mock_cfg.CONF = self.mock_conf
         self.mock_subcommandopt = mock.Mock()
@@ -51,7 +51,8 @@ class TestFakeVMVif(base.BaseTestCase):
         self.vif_driver = mock.Mock()
         self.vif_class = mock.Mock(return_value=self.vif_driver)
         self.import_class = mock.Mock(return_value=self.vif_class)
-        self.importutils = mock.patch('quantum.fakevm.vif.importutils').start()
+        self.importutils = mock.patch(
+            'quantum.debug.fakevm.vif.importutils').start()
         self.importutils.import_class = self.import_class
 
     def mock_vif(self):

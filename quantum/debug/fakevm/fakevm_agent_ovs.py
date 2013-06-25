@@ -22,8 +22,8 @@ from oslo.config import cfg
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.common import utils as q_utils
+from quantum.debug.fakevm import fakevm_agent_plugin_base
 from quantum.extensions import portbindings
-from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.plugins.openvswitch.common import config  # noqa
 
 

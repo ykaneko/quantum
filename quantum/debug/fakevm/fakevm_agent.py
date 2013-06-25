@@ -24,7 +24,7 @@ from oslo.config import cfg
 
 from quantum.agent.common import config
 from quantum.common import topics
-from quantum.fakevm import rpc as fakevm_rpc
+from quantum.debug.fakevm import rpc as fakevm_rpc
 from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc

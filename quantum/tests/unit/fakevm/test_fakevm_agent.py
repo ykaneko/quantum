@@ -17,11 +17,11 @@ import logging as std_logging
 
 import mock
 
-from quantum.fakevm import fakevm_agent
+from quantum.debug.fakevm import fakevm_agent
 from quantum.tests import base
 
 
-_AGENT_NAME = 'quantum.fakevm.fakevm_agent'
+_AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent'
 
 
 class TestFakeVMAgent(base.BaseTestCase):

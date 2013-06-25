@@ -17,7 +17,7 @@ from contextlib import nested
 
 import mock
 
-from quantum.fakevm import rpc
+from quantum.debug.fakevm import rpc
 from quantum.tests import base
 
 
@@ -30,11 +30,11 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
     def test_get_topic_name(self):
         rc = rpc.FakeVMRpcApi.get_topic_name('topic', 'host')
-        self.assertEqual(rc, 'quantum.fakevm.rpc.topic.host')
+        self.assertEqual(rc, 'quantum.debug.fakevm.rpc.topic.host')
 
     def test_get_topic_name_without_host(self):
         rc = rpc.FakeVMRpcApi.get_topic_name('topic')
-        self.assertEqual(rc, 'quantum.fakevm.rpc.topic')
+        self.assertEqual(rc, 'quantum.debug.fakevm.rpc.topic')
 
     def test_init(self):
         rpc.FakeVMRpcApi('topic')
@@ -51,7 +51,7 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
         mock_call.assert_has_calls([
             mock.call('context', 'message',
-                      topic='quantum.fakevm.rpc.topic.host1')
+                      topic='quantum.debug.fakevm.rpc.topic.host1')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('plug', instance_id='i-xxxx', network_id='fake_net',
@@ -71,7 +71,7 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
         mock_call.assert_has_calls([
             mock.call('context', 'message',
-                      topic='quantum.fakevm.rpc.topic.host1')
+                      topic='quantum.debug.fakevm.rpc.topic.host1')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('plug', instance_id='i-xxxx', network_id='fake_net',
@@ -91,7 +91,7 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
         mock_call.assert_has_calls([
             mock.call('context', 'message',
-                      topic='quantum.fakevm.rpc.topic.host1')
+                      topic='quantum.debug.fakevm.rpc.topic.host1')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('unplug', network_id='fake_net', vif_uuid='fake_port',
@@ -109,7 +109,7 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
         mock_call.assert_has_calls([
             mock.call('context', 'message',
-                      topic='quantum.fakevm.rpc.topic.host1')
+                      topic='quantum.debug.fakevm.rpc.topic.host1')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('unplug', network_id='fake_net', vif_uuid='fake_port',
@@ -127,7 +127,8 @@ class TestFakeVMRpcApi(base.BaseTestCase):
                                     'brname')
 
         mock_fanout_cast.assert_has_calls([
-            mock.call('context', 'message', topic='quantum.fakevm.rpc.topic')
+            mock.call('context', 'message',
+                      topic='quantum.debug.fakevm.rpc.topic')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('unplug_all_host', network_id='fake_net',
@@ -146,7 +147,7 @@ class TestFakeVMRpcApi(base.BaseTestCase):
 
         mock_call.assert_has_calls([
             mock.call('context', 'message',
-                      topic='quantum.fakevm.rpc.topic.host1')
+                      topic='quantum.debug.fakevm.rpc.topic.host1')
         ])
         mock_make_msg.assert_has_calls([
             mock.call('exec_command', vif_uuid='fake_port',

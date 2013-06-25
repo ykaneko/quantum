@@ -19,8 +19,8 @@
 
 import sys
 
+from quantum.debug.fakevm import fakevm_agent_plugin_base
 from quantum.extensions import portbindings
-from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.openstack.common import log as logging
 from quantum.plugins.linuxbridge.common import config  # noqa
 

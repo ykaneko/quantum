@@ -26,18 +26,19 @@ from quantumclient.shell import env, QuantumShell, QUANTUM_API_VERSION
 
 from quantum.agent.common import config
 from quantum.common import topics
-from quantum.fakevm import rpc as fakevm_rpc
+from quantum.debug.fakevm import rpc as fakevm_rpc
 
+
+_COMMAND_PREFIX = 'quantum.debug.fakevm.commands'
 
 COMMAND_V2 = {
-    'create-port': utils.import_class('quantum.fakevm.commands.CreatePort'),
-    'delete-port': utils.import_class('quantum.fakevm.commands.DeletePort'),
-    'migrate': utils.import_class('quantum.fakevm.commands.Migrate'),
-    'plug': utils.import_class('quantum.fakevm.commands.Plug'),
-    'unplug': utils.import_class('quantum.fakevm.commands.Unplug'),
-    'unplug-all-host':
-    utils.import_class('quantum.fakevm.commands.UnplugAllHost'),
-    'exec': utils.import_class('quantum.fakevm.commands.ExecCommand'),
+    'create-port': utils.import_class(_COMMAND_PREFIX + '.CreatePort'),
+    'delete-port': utils.import_class(_COMMAND_PREFIX + '.DeletePort'),
+    'migrate': utils.import_class(_COMMAND_PREFIX + '.Migrate'),
+    'plug': utils.import_class(_COMMAND_PREFIX + '.Plug'),
+    'unplug': utils.import_class(_COMMAND_PREFIX + '.Unplug'),
+    'unplug-all-host': utils.import_class(_COMMAND_PREFIX + '.UnplugAllHost'),
+    'exec': utils.import_class(_COMMAND_PREFIX + '.ExecCommand'),
 }
 COMMANDS = {'2.0': COMMAND_V2}
 

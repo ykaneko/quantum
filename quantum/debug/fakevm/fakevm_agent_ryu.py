@@ -19,8 +19,8 @@
 from oslo.config import cfg
 
 from quantum.agent.linux import ip_lib
+from quantum.debug.fakevm import fakevm_agent_plugin_base
 from quantum.extensions import portbindings
-from quantum.fakevm import fakevm_agent_plugin_base
 from quantum.plugins.ryu.agent import ryu_quantum_agent
 from quantum.plugins.ryu.common import config  # noqa
 

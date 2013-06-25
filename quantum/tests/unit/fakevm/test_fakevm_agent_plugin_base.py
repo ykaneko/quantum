@@ -17,7 +17,7 @@ from contextlib import nested
 
 import mock
 
-from quantum.fakevm import fakevm_agent_plugin_base
+from quantum.debug.fakevm import fakevm_agent_plugin_base
 from quantum.tests import base
 
 
@@ -28,7 +28,7 @@ class FakeVMAgentPlugin(fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
 
 class TestFakeVMAgentPluginBase(base.BaseTestCase):
 
-    _AGENT_NAME = 'quantum.fakevm.fakevm_agent_plugin_base'
+    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_plugin_base'
 
     def setUp(self):
         super(TestFakeVMAgentPluginBase, self).setUp()

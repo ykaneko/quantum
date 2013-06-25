@@ -17,11 +17,11 @@ from contextlib import nested
 
 import mock
 
-from quantum.fakevm import fakevm_cleanup_util
+from quantum.debug.fakevm import fakevm_cleanup_util
 from quantum.tests import base
 
 
-_MODULE_NAME = 'quantum.fakevm.fakevm_cleanup_util'
+_MODULE_NAME = 'quantum.debug.fakevm.fakevm_cleanup_util'
 
 
 class TestFakeVMCleanup(base.BaseTestCase):
@@ -108,8 +108,7 @@ class TestFakeVMCleanup(base.BaseTestCase):
                               return_value=devices + [exclude_dev]),
             mock.patch.object(self.ovs_lib, 'get_bridge_for_iface',
                               return_value='brname'),
-            mock.patch('quantum.fakevm.fakevm_cleanup_util.ip_lib.IPWrapper'
-                       '.get_namespaces',
+            mock.patch(_MODULE_NAME + '.ip_lib.IPWrapper.get_namespaces',
                        return_value=namespaces),
         ) as (mock_roothelper, mock_get_devices, mock_get_bridge_for_iface,
               mock_get_namespaces):
@@ -122,8 +121,12 @@ class TestFakeVMCleanup(base.BaseTestCase):
         self.config.assert_has_calls([
             mock.call.setup_logging(self.mock_conf)
         ])
-        self.ip_lib.assert_has_calls([
-            mock.call.IPWrapper('roothelper')
+        mock_get_namespaces.assert_has_calls([
+            mock.call('roothelper')
+        ])
+        self.ipwrapper.assert_has_calls([
+            mock.call.netns.delete('fakevm-host1-1'),
+            mock.call.netns.delete('fakevm-host2-2')
         ])
         self.assertEqual(mock_get_devices.call_count, 3)
         mock_get_bridge_for_iface.assert_has_calls([
@@ -142,9 +145,5 @@ class TestFakeVMCleanup(base.BaseTestCase):
                 mock.call.link.delete()
             ])
         self.assertEqual(exclude_dev.link.delete.call_count, 0)
-        self.ipwrapper.assert_has_calls([
-            mock.call.netns.delete('fakevm-host1-1'),
-            mock.call.netns.delete('fakevm-host2-2')
-        ])
         self.assertNotIn(mock.call('ns1234'),
                          self.ipwrapper.netns.delete.call_args_list)

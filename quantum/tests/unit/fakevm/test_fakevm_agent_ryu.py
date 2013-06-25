@@ -24,7 +24,7 @@ from quantum.tests.unit.ryu import fake_ryu
 
 class TestFakeVMAgentRyu(base.BaseTestCase):
 
-    _AGENT_NAME = 'quantum.fakevm.fakevm_agent_ryu'
+    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_ryu'
 
     def setUp(self):
         super(TestFakeVMAgentRyu, self).setUp()

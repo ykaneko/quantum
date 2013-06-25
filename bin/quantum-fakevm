@@ -17,5 +17,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.fakevm.shell import main
+from quantum.debug.fakevm.shell import main
+
+
 main()

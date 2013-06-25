@@ -16,7 +16,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.fakevm.fakevm_cleanup_util import main
+from quantum.debug.fakevm.fakevm_cleanup_util import main
 
 
 main()

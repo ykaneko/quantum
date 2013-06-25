@@ -17,5 +17,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from quantum.fakevm.fakevm_agent import main
+from quantum.debug.fakevm.fakevm_agent import main
+
+
 main()

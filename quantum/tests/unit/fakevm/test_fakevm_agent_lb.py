@@ -21,7 +21,7 @@ from quantum.tests import base
 
 class TestFakeVMAgentLB(base.BaseTestCase):
 
-    _AGENT_NAME = 'quantum.fakevm.fakevm_agent_lb'
+    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_lb'
 
     def setUp(self):
         super(TestFakeVMAgentLB, self).setUp()
