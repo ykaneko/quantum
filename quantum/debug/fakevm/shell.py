@@ -18,6 +18,7 @@
 
 import sys
 
+import eventlet
 from oslo.config import cfg
 
 from quantumclient.common import exceptions as exc
@@ -71,4 +72,5 @@ class QuantumFakeVMShell(QuantumShell):
 
 
 def main(argv=None):
+    eventlet.monkey_patch()
     return QuantumFakeVMShell(QUANTUM_API_VERSION).run(argv or sys.argv[1:])
