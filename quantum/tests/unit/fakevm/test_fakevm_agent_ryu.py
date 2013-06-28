@@ -30,8 +30,8 @@ class TestFakeVMAgentRyu(base.BaseTestCase):
         super(TestFakeVMAgentRyu, self).setUp()
         self.addCleanup(mock.patch.stopall)
         self.fake_ryu = fake_ryu.patch_fake_ryu_client().start()
+        self.cfg = mock.patch('oslo.config.cfg').start()
         self.mod_plugin = importutils.import_module(self._AGENT_NAME)
-        self.cfg = mock.patch(self._AGENT_NAME + '.cfg').start()
         self.ip_lib = mock.patch(self._AGENT_NAME + '.ip_lib').start()
         self.plugin_base = mock.patch(
             self._AGENT_NAME + '.fakevm_agent_plugin_base').start()
