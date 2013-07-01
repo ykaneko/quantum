@@ -21,21 +21,21 @@ from quantum.openstack.common import importutils
 from quantum.tests import base
 
 
+_AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_ovs'
+
+
 class TestFakeVMAgentOVS(base.BaseTestCase):
-
-    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_ovs'
-
     def setUp(self):
         super(TestFakeVMAgentOVS, self).setUp()
         self.addCleanup(mock.patch.stopall)
-        self.mod_plugin = importutils.import_module(self._AGENT_NAME)
-        self.cfg = mock.patch(self._AGENT_NAME + '.cfg').start()
-        self.ip_lib = mock.patch(self._AGENT_NAME + '.ip_lib').start()
-        self.ovs_lib = mock.patch(self._AGENT_NAME + '.ovs_lib').start()
-        self.q_utils = mock.patch(self._AGENT_NAME + '.q_utils').start()
+        self.mod_plugin = importutils.import_module(_AGENT_NAME)
+        self.cfg = mock.patch(_AGENT_NAME + '.cfg').start()
+        self.ip_lib = mock.patch(_AGENT_NAME + '.ip_lib').start()
+        self.ovs_lib = mock.patch(_AGENT_NAME + '.ovs_lib').start()
+        self.q_utils = mock.patch(_AGENT_NAME + '.q_utils').start()
         self.plugin_base = mock.patch(
-            self._AGENT_NAME + '.fakevm_agent_plugin_base').start()
-        self.config = mock.patch(self._AGENT_NAME + '.config').start()
+            _AGENT_NAME + '.fakevm_agent_plugin_base').start()
+        self.config = mock.patch(_AGENT_NAME + '.config').start()
 
     def mock_plugin(self):
         self.conf = mock.Mock()

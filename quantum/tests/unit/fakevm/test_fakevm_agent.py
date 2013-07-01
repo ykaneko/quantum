@@ -74,9 +74,6 @@ class TestFakeVMAgent(base.BaseTestCase):
         self.agent_plugin.assert_has_calls([
             mock.call.init(self.conf)
         ])
-        self.agent_config.assert_has_calls([
-            mock.call.get_root_helper(self.conf)
-        ])
         self.rpc_api.assert_has_calls([
             mock.call.get_topic_name('fakevm_agent', 'host1'),
             mock.call.get_topic_name('fakevm_agent')

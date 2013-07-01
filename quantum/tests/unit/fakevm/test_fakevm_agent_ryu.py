@@ -22,22 +22,22 @@ from quantum.tests import base
 from quantum.tests.unit.ryu import fake_ryu
 
 
+_AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_ryu'
+
+
 class TestFakeVMAgentRyu(base.BaseTestCase):
-
-    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_ryu'
-
     def setUp(self):
         super(TestFakeVMAgentRyu, self).setUp()
         self.addCleanup(mock.patch.stopall)
         self.fake_ryu = fake_ryu.patch_fake_ryu_client().start()
         self.cfg = mock.patch('oslo.config.cfg').start()
-        self.mod_plugin = importutils.import_module(self._AGENT_NAME)
-        self.ip_lib = mock.patch(self._AGENT_NAME + '.ip_lib').start()
+        self.mod_plugin = importutils.import_module(_AGENT_NAME)
+        self.ip_lib = mock.patch(_AGENT_NAME + '.ip_lib').start()
         self.plugin_base = mock.patch(
-            self._AGENT_NAME + '.fakevm_agent_plugin_base').start()
+            _AGENT_NAME + '.fakevm_agent_plugin_base').start()
         self.ryu_agent = mock.patch(
-            self._AGENT_NAME + '.ryu_quantum_agent').start()
-        self.config = mock.patch(self._AGENT_NAME + '.config').start()
+            _AGENT_NAME + '.ryu_quantum_agent').start()
+        self.config = mock.patch(_AGENT_NAME + '.config').start()
 
     def mock_plugin(self):
         self.conf = mock.Mock()

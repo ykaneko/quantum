@@ -23,6 +23,7 @@ import time
 
 from oslo.config import cfg
 
+from quantum.agent.common import config
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
 from quantum.agent.linux import utils
@@ -57,7 +58,7 @@ class QuantumFakeVMAgentPluginBase(object):
         self.conf = conf
         self.host = conf.FAKEVM.host
         self.path = os.path.abspath(os.path.dirname(__file__))
-        self.root_helper = self.conf.AGENT.root_helper
+        self.root_helper = config.get_root_helper(self.conf)
         self.vif_type = None
 
     @classmethod

@@ -20,13 +20,9 @@ import re
 
 from oslo.config import cfg
 
+from quantum.agent.common import config
 from quantum.agent.linux import ip_lib
 from quantum.agent.linux import ovs_lib
-from quantum.common import config
-
-AGENT_OPTS = [
-    cfg.StrOpt('root_helper', default='sudo'),
-]
 
 
 _BRIDGE_PATTERN = '^qbr.*'
@@ -53,11 +49,12 @@ def is_fakevm_ns(ns_name):
 
 def main():
     conf = cfg.CONF
-    conf.register_opts(AGENT_OPTS, 'AGENT')
+    config.register_root_helper(conf)
     config.setup_logging(conf)
     conf()
+    root_helper = config.get_root_helper(conf)
 
-    ip_wrapper = ip_lib.IPWrapper(conf.AGENT.root_helper)
+    ip_wrapper = ip_lib.IPWrapper(root_helper)
 
     print 'bridges:'
     bridges = [dev for dev in ip_wrapper.get_devices()
@@ -71,10 +68,9 @@ def main():
                  if is_ovs_port(dev.name)]
     for port in ovs_ports:
         print port.name
-        bridge_name = ovs_lib.get_bridge_for_iface(conf.AGENT.root_helper,
-                                                   port.name)
+        bridge_name = ovs_lib.get_bridge_for_iface(root_helper, port.name)
         if bridge_name:
-            bridge = ovs_lib.OVSBridge(bridge_name, conf.AGENT.root_helper)
+            bridge = ovs_lib.OVSBridge(bridge_name, root_helper)
             bridge.delete_port(port.name)
         port.link.delete()
 
@@ -87,7 +83,7 @@ def main():
 
     print 'fakevm namespace:'
     ns_names = [ns for ns in
-                ip_lib.IPWrapper.get_namespaces(conf.AGENT.root_helper)
+                ip_lib.IPWrapper.get_namespaces(root_helper)
                 if is_fakevm_ns(ns)]
     for ns_name in ns_names:
         # TODO(yamahata): kill dhcp client

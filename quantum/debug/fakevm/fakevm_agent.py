@@ -54,7 +54,6 @@ class QuantumFakeVMAgent(object):
         self.fakevm_agent_plugin = importutils.import_object(
             conf.FAKEVM.fakevm_agent_plugin)
         self.fakevm_agent_plugin.init(conf)
-        self.root_helper = config.get_root_helper(self.conf)
 
         self.setup_rpc()
 

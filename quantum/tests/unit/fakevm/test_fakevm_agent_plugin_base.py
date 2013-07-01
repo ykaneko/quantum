@@ -21,32 +21,41 @@ from quantum.debug.fakevm import fakevm_agent_plugin_base
 from quantum.tests import base
 
 
+_AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_plugin_base'
+
+
 class FakeVMAgentPlugin(fakevm_agent_plugin_base.QuantumFakeVMAgentPluginBase):
     def _get_vif_bridge_name(self, network_id, vif_uuid):
         pass
 
 
 class TestFakeVMAgentPluginBase(base.BaseTestCase):
-
-    _AGENT_NAME = 'quantum.debug.fakevm.fakevm_agent_plugin_base'
-
     def setUp(self):
         super(TestFakeVMAgentPluginBase, self).setUp()
         self.addCleanup(mock.patch.stopall)
-        self.cfg = mock.patch(self._AGENT_NAME + '.cfg').start()
-        self.ip_lib = mock.patch(self._AGENT_NAME + '.ip_lib').start()
-        self.ovs_lib = mock.patch(self._AGENT_NAME + '.ovs_lib').start()
-        self.logging = mock.patch(self._AGENT_NAME + '.logging').start()
+        self.cfg = mock.patch(_AGENT_NAME + '.cfg').start()
+        self.agent_config = mock.patch(_AGENT_NAME + '.config').start()
+        get_root_helper = mock.Mock(return_value='roothelper')
+        self.agent_config.get_root_helper = get_root_helper
+        self.ip_lib = mock.patch(_AGENT_NAME + '.ip_lib').start()
+        self.ovs_lib = mock.patch(_AGENT_NAME + '.ovs_lib').start()
+        self.logging = mock.patch(_AGENT_NAME + '.logging').start()
 
         self.conf = mock.Mock()
         self.conf.FAKEVM.host = 'host1'
         self.conf.FAKEVM.nova_conf = 'nova.conf'
-        self.conf.AGENT.root_helper = 'roothelper'
 
     def mock_plugin(self):
         plugin = FakeVMAgentPlugin()
         plugin.init(self.conf)
         return plugin
+
+    def test_init(self):
+        self.mock_plugin()
+
+        self.agent_config.assert_has_calls([
+            mock.call.get_root_helper(self.conf)
+        ])
 
     def test_get_veth_pair_names(self):
         plugin = self.mock_plugin()
@@ -67,9 +76,9 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute',
+            mock.patch(_AGENT_NAME + '.utils.execute',
                        return_value='qbr'),
-            mock.patch(self._AGENT_NAME + '.os.path.join',
+            mock.patch(_AGENT_NAME + '.os.path.join',
                        return_value='vif.py')
         ) as (mock_exec, mock_join):
             brname = plugin._get_probe_br_name('fake_net', 'fake_port')
@@ -83,7 +92,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
     def test_execute(self):
         plugin = self.mock_plugin()
 
-        with mock.patch(self._AGENT_NAME + '.utils.execute') as mock_exec:
+        with mock.patch(_AGENT_NAME + '.utils.execute') as mock_exec:
             plugin._execute('command')
 
         mock_exec.assert_has_calls([
@@ -93,7 +102,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
     def test_device_exists(self):
         plugin = self.mock_plugin()
 
-        with mock.patch(self._AGENT_NAME + '.utils.execute') as mock_exec:
+        with mock.patch(_AGENT_NAME + '.utils.execute') as mock_exec:
             rc = plugin._device_exists('fakedevice')
 
         self.assertEqual(rc, True)
@@ -105,7 +114,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
     def test_device_exists_no_device(self):
         plugin = self.mock_plugin()
 
-        with mock.patch(self._AGENT_NAME + '.utils.execute',
+        with mock.patch(_AGENT_NAME + '.utils.execute',
                         side_effect=RuntimeError) as mock_exec:
             rc = plugin._device_exists('fakedevice')
 
@@ -119,10 +128,10 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         with nested(
-            mock.patch(self._AGENT_NAME +
+            mock.patch(_AGENT_NAME +
                        '.QuantumFakeVMAgentPluginBase._device_exists',
                        return_value=False),
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
         ) as (mock_device_exists, mock_exec):
             plugin._ensure_bridge('fakedevice')
 
@@ -144,10 +153,10 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         with nested(
-            mock.patch(self._AGENT_NAME +
+            mock.patch(_AGENT_NAME +
                        '.QuantumFakeVMAgentPluginBase._device_exists',
                        return_value=True),
-            mock.patch(self._AGENT_NAME + '.time.sleep'),
+            mock.patch(_AGENT_NAME + '.time.sleep'),
         ) as (mock_device_exists, mock_sleep):
             plugin._ensure_bridge('fakedevice')
 
@@ -177,7 +186,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         br_veth = mock.Mock()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
                               'add_veth', return_value=[ovs_veth, br_veth])
         ) as (mock_exec, mock_add_veth):
@@ -211,7 +220,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         br_veth = mock.Mock()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
                               'add_veth', return_value=[ovs_veth, br_veth])
         ) as (mock_exec, mock_add_veth):
@@ -288,9 +297,9 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         plugin = self.mock_plugin()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute',
+            mock.patch(_AGENT_NAME + '.utils.execute',
                        return_value='qbr'),
-            mock.patch(self._AGENT_NAME + '.os.path.join',
+            mock.patch(_AGENT_NAME + '.os.path.join',
                        return_value='vif.py')
         ) as (mock_exec, mock_join):
             plugin._exec_vif_wrapper(['command', 'args'])
@@ -346,7 +355,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ns_obj = mock.Mock()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
                               'add_veth', return_value=[br_veth, vm_veth]),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
@@ -387,7 +396,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ns_obj = mock.Mock()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
                               'add_veth', return_value=[br_veth, vm_veth]),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
@@ -425,7 +434,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ns_obj = mock.Mock()
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
                               'add_veth', return_value=[br_veth, vm_veth]),
             mock.patch.object(self.ip_lib.IPWrapper.return_value,
@@ -466,7 +475,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ip_wrapper_ns.device = mock.Mock(return_value=vm_veth)
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib, 'device_exists',
                               side_effect=[True, True]),
             mock.patch.object(self.ip_lib, 'IPWrapper',
@@ -515,7 +524,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ip_wrapper_ns.device = mock.Mock(return_value=vm_veth)
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib, 'device_exists',
                               side_effect=[False, True]),
             mock.patch.object(self.ip_lib, 'IPWrapper',
@@ -559,7 +568,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ip_wrapper_ns.device = mock.Mock(return_value=vm_veth)
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib, 'device_exists',
                               side_effect=[True, False]),
             mock.patch.object(self.ip_lib, 'IPWrapper',
@@ -606,7 +615,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ip_wrapper_ns.device = mock.Mock(return_value=vm_veth)
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib, 'device_exists',
                               side_effect=[True, True]),
             mock.patch.object(self.ip_lib, 'IPWrapper',
@@ -649,7 +658,7 @@ class TestFakeVMAgentPluginBase(base.BaseTestCase):
         ip_wrapper_ns.device = mock.Mock(return_value=vm_veth)
 
         with nested(
-            mock.patch(self._AGENT_NAME + '.utils.execute'),
+            mock.patch(_AGENT_NAME + '.utils.execute'),
             mock.patch.object(self.ip_lib, 'device_exists',
                               side_effect=[True, True]),
             mock.patch.object(self.ip_lib, 'IPWrapper',

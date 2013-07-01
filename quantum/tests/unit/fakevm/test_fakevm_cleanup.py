@@ -40,6 +40,8 @@ class TestFakeVMCleanup(base.BaseTestCase):
         self.ovsbridge = mock.Mock()
         self.ovs_lib.OVSBridge = mock.Mock(return_value=self.ovsbridge)
         self.config = mock.patch(_MODULE_NAME + '.config').start()
+        get_root_helper = mock.Mock(return_value='roothelper')
+        self.config.get_root_helper = get_root_helper
 
     def mock_is_vif_bridge(self):
         match = ['qbr1234']
@@ -102,24 +104,23 @@ class TestFakeVMCleanup(base.BaseTestCase):
         namespaces = ['fakevm-host1-1', 'fakevm-host2-2', 'ns1234']
 
         with nested(
-            mock.patch.object(self.mock_conf.AGENT, 'root_helper',
-                              'roothelper'),
             mock.patch.object(self.ipwrapper, 'get_devices',
                               return_value=devices + [exclude_dev]),
             mock.patch.object(self.ovs_lib, 'get_bridge_for_iface',
                               return_value='brname'),
             mock.patch(_MODULE_NAME + '.ip_lib.IPWrapper.get_namespaces',
                        return_value=namespaces),
-        ) as (mock_roothelper, mock_get_devices, mock_get_bridge_for_iface,
+        ) as (mock_get_devices, mock_get_bridge_for_iface,
               mock_get_namespaces):
             fakevm_cleanup_util.main()
 
         self.mock_conf.assert_has_calls([
-            mock.call.register_opts(fakevm_cleanup_util.AGENT_OPTS, 'AGENT'),
             mock.call()
         ])
         self.config.assert_has_calls([
-            mock.call.setup_logging(self.mock_conf)
+            mock.call.register_root_helper(self.mock_conf),
+            mock.call.setup_logging(self.mock_conf),
+            mock.call.get_root_helper(self.mock_conf)
         ])
         mock_get_namespaces.assert_has_calls([
             mock.call('roothelper')
