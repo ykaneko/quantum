@@ -1,19 +1,24 @@
-Plugin integrated tester/emulator for Qauntum
+Plugin integrated tester/emulator for Quantum
 
-# -- overview
-Fakevm provides testing environment for Quantum without Nova.
+# -- Overview
+
+FakeVM provides testing environment for Quantum without Nova.
 (excpet nova libvirt vif driver)
 With this, we can emulate create/delete/migrate VM port, and operate on
 the network device like ping.
 
-In addition to the above, fakevm can emulate multi-compute node with single
+In addition to the above, FakeVM can emulate multi-compute node with single
 host.
 (However migrate isn't emulated due to interface name conflict)
 
-# -- setup
-setup quantum (and its agents) as usual. And run quantum-fakevm-agent.
 
-# -- command
+# -- Setup
+
+Setup Quantum (and its agents) as usual. And run quantum-fakevm-agent.
+
+
+# -- Command
+
 quantum-fakevm <command> [options] [parameters]
 
 * options
@@ -21,33 +26,211 @@ quantum-fakevm <command> [options] [parameters]
 
 * command
 create-port <network-id> <instance-id>
-	create quantum port and plug vif on specified host
+        create Quantum port and plug vif on specified host
 
 delete-port <vif-uuid>
-	unplug vif and delete quantum port
+        unplug vif and delete Quantum port
 
 migrate <destination-host> <vif-uuid>
-	migrate vif from host that was specified by --host option to
-	destination host
+        migrate vif from host that was specified by --host option to
+        destination host
 
 plug <vif-uuid>
-	plug vif on specified host
+        plug vif on specified host
 
 unplug <vif-uuid>
-	unplug vif on specified host
+        unplug vif on specified host
 
 unplug-all-host <vif-uuid>
-	unplug vif on all host
+        unplug vif on all host
 
 exec <vif-uuid> commands
-	execute commands for <vif-uuid>
+        execute commands for <vif-uuid>
+
+
+# -- Configuration
+
+quantum-fakevm-agent has some configuration parameters.
+These parameters belong to [fakevm] group.
+
+* common parameters
+
+host
+        The name of a host which run the agent.
+
+fakevm_agent_plugin
+        FakeVM Agent Plugin class which is corresponding to Quantum Plugin.
+        There is three plugin.
+
+        linuxbridge Plugin
+            quantum.debug.fakevm.fakevm_agent_lb.QuantumFakeVMAgentLB
+        Open vSwitch Plugin
+            quantum.debug.fakevm.fakevm_agent_ovs.QuantumFakeVMAgentOVS
+        Ryu Plugin
+            quantum.debug.fakevm.fakevm_agent_ryu.QuantumFakeVMAgentRyu
+        
+nova_conf
+        Path to nova.conf. This is used by the vif wrapper of FakeVM.
+        Default is /etc/nova/nova.conf.
+
+enable_multi_node_emulate
+        Enable the multi node enulation. Default is False.
+
+
+* For OVS and Ryu plugin
+
+vir_bridge
+        Bridge name to be used for the vlan mode of the multi node emulation.
+
+use_tunnel
+        Use tunnel or not. set True when tunneling of Quantum OVS plugin is
+        enabled. Default is False.
+
+* OVS plugin only
+
+tunnel_interface
+        Tunnel interface to use when use_tunnel is enabled.
+
 
 # -- Limitations
+
+* emulate live-migrate
+
 In order to emulate live-migrate, two hosts are necessary.
 This is due to conflict of network interface name.
 On Linux network interface name is limited to 14 bytes or so.
 
+* emulate multi-compute node
+
++ linuxbridge
+
+At this moment, FakeVM linuxbridge plugin does not support the multi node
+emulation. This is due to conflict of a bridge name.
+
++ Open vSwitch and Ryu 
+
+At this moment, It is necessary to modify Open vSwitch to use the tunnel mode
+of the multi node emulation.
+
+
+# -- Structure
+
+In FakeVM agent, there are two functions. One is create of a probe interface.
+And the second is emulate the environment of a multiple compute node on the
+host. The realization ways are different by each FakeVM agent plugin.
+
+* Probe interface
+
++ Open vSwitch/Ryu
+
+The nova vif driver makes an ethernet pair (veth), and linux bridge for
+the port. An interface of veth is connected to br-int and the other
+interface is connected to the linux bridge.
+FakeVM agent plugin makes a veth and connect an interface to the bridge and
+the other interface is used as a probe interface. The agent plugin creates
+also a namespace for the probe interface to separate each interfaces.
+
+    +----------+
+    |          |
+    |  br-int  |
+    |          |
+    +---[qvo]--+
+          |               .... ns = fakevm-<HOST>-<PORT-ID> ...
+          |               :
+  +-----[qvb]------+      :
+  |                |      :
+  |  qbr<PORT-ID> [qfb]-----[qfv]
+  |                |      :
+  +----------------+      :
+                          :
+
++ linuxbridge
+
+Quantum linuxbridge plugin agent handles the interface of the name that
+starts with 'tap'. Therefore it is necessary for the name of the probe
+interface to starts with 'tap'.
+FakeVM agent plugin makes a veth with the interface of the name that starts
+with 'tap'. The interface is connected to the bridge for a Quantum network.
+And the other is used as a probe interface.
+
+                            .... ns = fakevm-<HOST>-<PORT-ID> ...
+  +-------------------+     :
+  |                   |     :
+  |  brq<NETWORK-ID> [tap]-----[qfv]
+  |                   |     :
+  +-------------------+     :
+
+
+* Multi node emulation
+
++ Open vSwitch
+
+There are two modes of VLAN and Tunnel. In VLAN mode, OVS bridge of the each
+host is connected via bridge. When a provider network is used, a Linux
+bridge is created for each physical network.
+
+  +-------------------+  +-------------------+
+  |                   |  |                   |
+  |      br-int1      |  |      br-int2      |
+  |                   |  |                   |
+  +--[int-<PHY-BR1>]--+  +--[int-<PHY-BR2>]--+
+            |                      |
+            |                      |
+  +--[phy-<PHY-BR1>]--+  +--[phy-<PHY-BR2>]--+
+  |                   |  |                   |
+  |      PHY-BR1      |  |      PHY-BR2      |
+  |                   |  |                   |
+  +--[qfo<PHY-BR1>]---+  +---[qfo<PHY-BR2>]--+
+             |                    |
+             |                    |
+     +--[qfb<PHY-BR1>]----[qfb<PHY-BR2>]--+
+     |                                    |
+     |           bfv-<PHY-NET1>           |
+     |                                    |
+     +------------------------------------+
+
+br-int1 is for a host 1, and br-int2 is for the other host 2.
+On host1, bridge_mappings is configured as <PHY-NET1>:<PHY-BR1>.
+On host2, bridge_mappings is configured as <PHY-NET1>:<PHY-BR2>.
+
+In the tunnel mode, the dummy interface for each host is created, and an IP
+address for tunnel is assigned to the interface.
+
+NOTE: OVS bridge cannot perform GRE communication on the same host now.
+Therefore, a modification of OVS is necessary to use the tunnel mode.
+
++ linuxbridge
+
+FakeVM agent linuxbridge plugin does not support the multi node emulation
+now. Because the name of the bridge which Quantum linuxbridge plugin makes
+conflicts. The name of the bridge is made by prefix 'brq' and network ID.
+The prefix is defined statically, and the network ID is unique. So we cannot
+avoid conflict.
+
++ Ryu
+
+There are two modes like OVS. VLAN mode is simpler than OVS's because Quantum
+Ryu plugin does not support the provider network yet. It connects each OVS
+bridge by a bridge simply.
+
+  +-------------------+  +-------------------+
+  |                   |  |                   |
+  |      br-int1      |  |      br-int2      |
+  |                   |  |                   |
+  +----[qfo<HOST1>]---+  +---[qfo<HOST2>]----+
+            |                      |
+            |                      |
+     +--[qfb<HOST1>]--------[qfb<HOST2>]--+
+     |                                    |
+     |             br-fakevm              |
+     |                                    |
+     +------------------------------------+
+
+The tunnel mode is same as OVS's.
+
+
 # -- Example
+
 Use devstack to setup
 
 localrc
