@@ -205,6 +205,12 @@ class TestIpWrapper(base.BaseTestCase):
                                              'peer', 'name', 'tap1'),
                                              'sudo', None)
 
+    def test_add_dummy(self):
+        ip_lib.IPWrapper('sudo').add_dummy('dmy0')
+        self.execute.assert_called_once_with('', 'link',
+                                             ('add', 'dmy0', 'type', 'dummy'),
+                                             'sudo', None)
+
     def test_add_veth_with_namespaces(self):
         ns2 = 'ns2'
         with mock.patch.object(ip_lib.IPWrapper, 'ensure_namespace') as en:

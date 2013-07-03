@@ -29,6 +29,8 @@ DHCP = 'q-dhcp-notifer'
 L3_AGENT = 'l3_agent'
 DHCP_AGENT = 'dhcp_agent'
 
+FAKEVM_AGENT = 'fakevm_agent'
+
 
 def get_topic_name(prefix, table, operation):
     """Create a topic name.
