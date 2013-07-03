@@ -111,6 +111,8 @@ emulation. This is due to conflict of a bridge name.
 
 At this moment, It is necessary to modify Open vSwitch to use the tunnel mode
 of the multi node emulation.
+See the following URL for the details:
+  http://openvswitch.org/pipermail/dev/2013-June/028943.html
 
 
 # -- Structure
@@ -123,12 +125,12 @@ host. The realization ways are different by each FakeVM agent plugin.
 
 + Open vSwitch/Ryu
 
-The nova vif driver makes an ethernet pair (veth), and linux bridge for
-the port. An interface of veth is connected to br-int and the other
-interface is connected to the linux bridge.
-FakeVM agent plugin makes a veth and connect an interface to the bridge and
-the other interface is used as a probe interface. The agent plugin creates
-also a namespace for the probe interface to separate each interfaces.
+The nova vif driver makes a veth and linux bridge for the port. An interface
+of veth is connected to br-int and the other interface is connected to the
+linux bridge.
+FakeVM agent plugin makes a extra veth and connect an interface to the bridge
+and the other interface is used as a probe interface. The agent plugin creates
+also a namespace for the probe interface to separate each probes.
 
     +----------+
     |          |
@@ -196,8 +198,8 @@ On host2, bridge_mappings is configured as <PHY-NET1>:<PHY-BR2>.
 In the tunnel mode, the dummy interface for each host is created, and an IP
 address for tunnel is assigned to the interface.
 
-NOTE: OVS bridge cannot perform GRE communication on the same host now.
-Therefore, a modification of OVS is necessary to use the tunnel mode.
+NOTE: To use tunnel mode, it is necessary to modify Open vSwitch. Please see
+Limitations section above.
 
 + linuxbridge
 
@@ -231,7 +233,9 @@ The tunnel mode is same as OVS's.
 
 # -- Example
 
-Use devstack to setup
+* Single node, create a port and do ping from the probe
+
+Use devstack to setup.
 
 localrc
 
@@ -248,52 +252,87 @@ localrc
     # q-meta makes sense only with nova
     # plus your quantum plugin settings...
 
+    Q_PLUGIN=openvswitch
+    ENABLE_TENANT_TUNNELS=False
+    ENABLE_TENANT_VLANS=True
+    PHYSICAL_NETWORK=phy1
+    TENANT_VLAN_RANGE=200:300
+    OVS_PHYSICAL_BRIDGE=br-eth1
+
     # And necessary parameters...
 
-run devstack.
-Then start fakevm agent.
+Run devstack, then start fakevm agent.
 
-    # quantum-fakevm-agent  --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/ryu/ryu.ini --config-file ./etc/fakevm.ini --nova-config-file /etc/nova/nova.conf
+fakevm.ini
 
-Then oprates on it
+    [default]
+    debug = True
+    verbose = True
+    
+    [fakevm]
+    host = guest1
+    nova_conf = /etc/nova/nova.conf
+    fakevm_agent_plugin = quantum.debug.fakevm.fakevm_agent_ovs.QuantumFakeVMAgentOVS
+    enable_multi_node_emulate = False
 
-# export OS_USER=admin
-# export ADMIN_PASSWORD=<admin password>
-# source openrc
-root@vtd ~/openvswitch/sp-lab/scarab/gre-tunnel/quantum-1 # quantum net-list      
-+--------------------------------------+---------+--------------------------------------+
-| id                                   | name    | subnets                              |
-+--------------------------------------+---------+--------------------------------------+
-| 8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa | private | 77bcb894-e42d-4df0-83c8-86c9fcb49d40 |
-| cfea21a3-fb16-438e-b207-600c6c9671d1 | nova    | a9cf6dff-ae8d-4fb3-bd2e-46631c62358f |
-+--------------------------------------+---------+--------------------------------------+
-root@vtd ~/openvswitch/sp-lab/scarab/gre-tunnel/quantum-1 # quantum port-list     
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
-| id                                   | name | mac_address       | fixed_ips                                                                       |
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
-| 315442b7-0639-46c9-abb6-5d6729f5a0f9 |      | fa:16:3e:f3:77:ce | {"subnet_id": "77bcb894-e42d-4df0-83c8-86c9fcb49d40", "ip_address": "10.0.0.1"} |
-| e3f96353-7864-42be-a709-a3ec3dfa8bee |      | fa:16:3e:87:47:66 | {"subnet_id": "77bcb894-e42d-4df0-83c8-86c9fcb49d40", "ip_address": "10.0.0.2"} |
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
- # ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf create-port --host vtd 8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa i-xxxx
-VM port created on vtd: vif_uuid: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f mac: fa:16:3e:b0:20:18 tenant_id: a63586fe94fc41bbbc80da8a8dd13125
-fixed_ips: [{u'subnet_id': u'77bcb894-e42d-4df0-83c8-86c9fcb49d40', u'ip_address': u'10.0.0.3'}]
-netowrk: {u'status': u'ACTIVE', u'subnets': [u'77bcb894-e42d-4df0-83c8-86c9fcb49d40'], u'name': u'private', u'admin_state_up': True, u'tenant_id': u'a63586fe94fc41bbbc80da8a8dd13125', u'router:external': False, u'shared': False, u'id': u'8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa'}
-# quantum port-list                                                                                                                         
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
-| id                                   | name | mac_address       | fixed_ips                                                                       |
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
-| 315442b7-0639-46c9-abb6-5d6729f5a0f9 |      | fa:16:3e:f3:77:ce | {"subnet_id": "77bcb894-e42d-4df0-83c8-86c9fcb49d40", "ip_address": "10.0.0.1"} |
-| 3cb67759-59ad-4cbf-bbbe-89a39eddf64f |      | fa:16:3e:b0:20:18 | {"subnet_id": "77bcb894-e42d-4df0-83c8-86c9fcb49d40", "ip_address": "10.0.0.3"} |
-| e3f96353-7864-42be-a709-a3ec3dfa8bee |      | fa:16:3e:87:47:66 | {"subnet_id": "77bcb894-e42d-4df0-83c8-86c9fcb49d40", "ip_address": "10.0.0.2"} |
-+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+
- # ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host vtd 3cb67759-59ad-4cbf-bbbe-89a39eddf64f "ip link"
-VM port executeon vtd: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f ip link
-34: qfv3cb67759-5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT qlen 1000
-    link/ether fa:16:3e:b0:20:18 brd ff:ff:ff:ff:ff:ff
-36: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN mode DEFAULT 
+$ quantum-fakevm-agent --config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini \
+--config-file ./fakevm.ini
+
+
+Then create a port.
+
+$ . ./openrc admin demo
+$ quantum net-list
++--------------------------------------+---------+-------------------------------------------------------+
+| id                                   | name    | subnets                                               |
++--------------------------------------+---------+-------------------------------------------------------+
+| 18f725c7-dd56-42ba-975d-e444152a0377 | public  | 76d5e916-2353-4025-a61a-2e5ca8a15708 192.168.100.0/24 |
+| 5379c0d2-9a0d-4bc5-a028-a0c0c7df336d | private | ee138a17-cdf4-436f-b651-0245201ea71e 10.0.0.0/24      |
++--------------------------------------+---------+-------------------------------------------------------+
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+create-port --host guest1 5379c0d2-9a0d-4bc5-a028-a0c0c7df336d i-xxxx
+ :::
+VM port created on guest1: vif_uuid: d7e577a9-a9cd-46a4-870c-2754641e6b87 mac: fa:16:3e:87:e6:4f tenant_id: 43dd8e1496104939bca6256edf874661
+fixed_ips: [{u'subnet_id': u'ee138a17-cdf4-436f-b651-0245201ea71e', u'ip_address': u'10.0.0.3'}]
+netowrk: {u'status': u'ACTIVE', u'subnets': [u'ee138a17-cdf4-436f-b651-0245201ea71e'], u'name': u'private', u'provider:physical_network': u'phy1', u'admin_state_up': True, u'tenant_id': u'43dd8e1496104939bca6256edf874661', u'provider:network_type': u'vlan', u'router:external': False, u'shared': False, u'id': u'5379c0d2-9a0d-4bc5-a028-a0c0c7df336d', u'provider:segmentation_id': 200}
+$ 
+$ quantum port-list
++--------------------------------------+------+-------------------+--------------------------------------------------------------------------------------+
+| id                                   | name | mac_address       | fixed_ips                                                                            |
++--------------------------------------+------+-------------------+--------------------------------------------------------------------------------------+
+| 4c12d56c-83fd-4b8e-8ad9-7b5823259e7d |      | fa:16:3e:07:5e:3e | {"subnet_id": "ee138a17-cdf4-436f-b651-0245201ea71e", "ip_address": "10.0.0.2"}      |
+| 9ffdbffd-e8eb-4ae2-ad86-d0ca50303251 |      | fa:16:3e:34:55:5e | {"subnet_id": "76d5e916-2353-4025-a61a-2e5ca8a15708", "ip_address": "192.168.100.2"} |
+| b167fd32-3d4d-4a21-911e-230aa245bf32 |      | fa:16:3e:bb:91:68 | {"subnet_id": "ee138a17-cdf4-436f-b651-0245201ea71e", "ip_address": "10.0.0.1"}      |
+| d7e577a9-a9cd-46a4-870c-2754641e6b87 |      | fa:16:3e:87:e6:4f | {"subnet_id": "ee138a17-cdf4-436f-b651-0245201ea71e", "ip_address": "10.0.0.3"}      |
++--------------------------------------+------+-------------------+--------------------------------------------------------------------------------------+
+$ 
+ 
+
+Assign IP address to the probe interface by using dhclient.
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest1 d7e577a9-a9cd-46a4-870c-2754641e6b87 "ip link"
+ :::
+VM port executeon guest1: d7e577a9-a9cd-46a4-870c-2754641e6b87 ip link
+19: qfvd7e577a9-a: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether fa:16:3e:87:e6:4f brd ff:ff:ff:ff:ff:ff
+21: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN 
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host vtd 3cb67759-59ad-4cbf-bbbe-89a39eddf64f "ifconfig"
-VM port executeon vtd: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f ifconfig
+
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest1 d7e577a9-a9cd-46a4-870c-2754641e6b87 "dhclient -4 -v qfvd7e577a9-a"
+ :::
+VM port executeon guest1: d7e577a9-a9cd-46a4-870c-2754641e6b87 dhclient -4 -v qfvd7e577a9-a
+
+$ 
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest1 d7e577a9-a9cd-46a4-870c-2754641e6b87 "ifconfig"
+ :::
+VM port executeon guest1: d7e577a9-a9cd-46a4-870c-2754641e6b87 ifconfig
 lo        Link encap:Local Loopback  
           inet addr:127.0.0.1  Mask:255.0.0.0
           inet6 addr: ::1/128 Scope:Host
@@ -303,69 +342,90 @@ lo        Link encap:Local Loopback
           collisions:0 txqueuelen:0 
           RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
 
-qfv3cb67759-5 Link encap:Ethernet  HWaddr fa:16:3e:b0:20:18  
-          inet6 addr: fe80::f816:3eff:feb0:2018/64 Scope:Link
-          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
-          RX packets:30 errors:0 dropped:0 overruns:0 frame:0
-          TX packets:4 errors:0 dropped:0 overruns:0 carrier:0
-          collisions:0 txqueuelen:1000 
-          RX bytes:8157 (8.1 KB)  TX bytes:408 (408.0 B)
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host vtd 3cb67759-59ad-4cbf-bbbe-89a39eddf64f "dhclient -4 -v qfv3cb67759-5"
-VM port executeon vtd: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f dhclient -4 -v qfv3cb67759-5
-
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host vtd 3cb67759-59ad-4cbf-bbbe-89a39eddf64f "ifconfig"
-VM port executeon vtd: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f ifconfig
-lo        Link encap:Local Loopback  
-          inet addr:127.0.0.1  Mask:255.0.0.0
-          inet6 addr: ::1/128 Scope:Host
-          UP LOOPBACK RUNNING  MTU:16436  Metric:1
-          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
-          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
-          collisions:0 txqueuelen:0 
-          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
-
-qfv3cb67759-5 Link encap:Ethernet  HWaddr fa:16:3e:b0:20:18  
+qfvd7e577a9-a Link encap:Ethernet  HWaddr fa:16:3e:87:e6:4f  
           inet addr:10.0.0.3  Bcast:10.0.0.255  Mask:255.255.255.0
-          inet6 addr: fe80::f816:3eff:feb0:2018/64 Scope:Link
+          inet6 addr: fe80::f816:3eff:fe87:e64f/64 Scope:Link
           UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
-          RX packets:38 errors:0 dropped:0 overruns:0 frame:0
-          TX packets:12 errors:0 dropped:0 overruns:0 carrier:0
+          RX packets:20 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:10 errors:0 dropped:0 overruns:0 carrier:0
           collisions:0 txqueuelen:1000 
-          RX bytes:9600 (9.6 KB)  TX bytes:1713 (1.7 KB)
+          RX bytes:2304 (2.3 KB)  TX bytes:1528 (1.5 KB)
 
 
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host vtd 3cb67759-59ad-4cbf-bbbe-89a39eddf64f "ping -c 1 10.0.0.2"
-VM port executeon vtd: 3cb67759-59ad-4cbf-bbbe-89a39eddf64f ping -c 1 10.0.0.2
+Ping from the probe interface to the DHCP port on Quantum network.
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest1 d7e577a9-a9cd-46a4-870c-2754641e6b87 "ping -c1 10.0.0.2"
+ :::
+VM port executeon guest1: d7e577a9-a9cd-46a4-870c-2754641e6b87 ping -c1 10.0.0.2
 PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
-64 bytes from 10.0.0.2: icmp_req=1 ttl=64 time=0.203 ms
+64 bytes from 10.0.0.2: icmp_req=1 ttl=64 time=44.1 ms
 
 --- 10.0.0.2 ping statistics ---
 1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 0.203/0.203/0.203/0.000 ms
+rtt min/avg/max/mdev = 44.159/44.159/44.159/0.000 ms
 
-Then run ryu agent and fake agent on the same machine with differenct
-configuration
-    # quantum-ryu-agent --debug --verbose --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/ryu/ryu.ini --config-file etc/fakevm-guest-1.ini
-    ...
-    # ./bin/quantum-fakevm-agent  --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/ryu/ryu.ini --config-file ./etc/fakevm-guest-1.ini --nova-config-file /etc/nova/nova.conf
+$ 
 
-Then operate on it
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf create-port --host guest-1 8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa i-yyyy
-VM port created on guest-1: vif_uuid: de8dfe12-99a3-454d-972a-edf98ec96fe0 mac: fa:16:3e:12:08:c9 tenant_id: a63586fe94fc41bbbc80da8a8dd13125
-fixed_ips: [{u'subnet_id': u'77bcb894-e42d-4df0-83c8-86c9fcb49d40', u'ip_address': u'10.0.0.4'}]
-netowrk: {u'status': u'ACTIVE', u'subnets': [u'77bcb894-e42d-4df0-83c8-86c9fcb49d40'], u'name': u'private', u'admin_state_up': True, u'tenant_id': u'a63586fe94fc41bbbc80da8a8dd13125', u'router:external': False, u'shared': False, u'id': u'8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa'}
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host guest-1 de8dfe12-99a3-454d-972a-edf98ec96fe0  "ip link"
-VM port executeon guest-1: de8dfe12-99a3-454d-972a-edf98ec96fe0 ip link
-43: qfvde8dfe12-9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT qlen 1000
-    link/ether fa:16:3e:12:08:c9 brd ff:ff:ff:ff:ff:ff
-45: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN mode DEFAULT 
+
+* Multi node and emulate live-migration
+
+On the other physical host, run FakeVM agent and Quantum plugin agent.
+
+fakevm.ini
+
+    [default]
+    debug = True
+    verbose = True
+    
+    [fakevm]
+    host = guest2
+    nova_conf = /etc/nova/nova.conf
+    fakevm_agent_plugin = quantum.debug.fakevm.fakevm_agent_ovs.QuantumFakeVMAgentOVS
+    enable_multi_node_emulate = False
+
+$ quantum-fakevm-agent --config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini \
+--config-file ./fakevm.ini
+
+$ sudo ovs-vsctl add-br br-int
+$ sudo ovs-vsctl add-br br-eth1
+$ sudo ovs-vsctl add-port br-eth1 eth1
+$ quantum-openvswitch-agent --debug --verbose \
+--config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini
+
+
+Then operate on the original node.
+
+$ sudo ovs-vsctl add-port br-eth1 eth1
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+create-port --host guest2 5379c0d2-9a0d-4bc5-a028-a0c0c7df336d i-yyyy
+ :::
+VM port created on guest2: vif_uuid: 418874ff-571b-46e2-a28a-75fe8afcb9e1 mac: fa:16:3e:c8:c0:34 tenant_id: 43dd8e1496104939bca6256edf874661
+fixed_ips: [{u'subnet_id': u'ee138a17-cdf4-436f-b651-0245201ea71e', u'ip_address': u'10.0.0.4'}]
+netowrk: {u'status': u'ACTIVE', u'subnets': [u'ee138a17-cdf4-436f-b651-0245201ea71e'], u'name': u'private', u'provider:physical_network': u'phy1', u'admin_state_up': True, u'tenant_id': u'43dd8e1496104939bca6256edf874661', u'provider:network_type': u'vlan', u'router:external': False, u'shared': False, u'id': u'5379c0d2-9a0d-4bc5-a028-a0c0c7df336d', u'provider:segmentation_id': 200}
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest2 418874ff-571b-46e2-a28a-75fe8afcb9e1 "ip link"
+ :::
+VM port executeon guest2: 418874ff-571b-46e2-a28a-75fe8afcb9e1 ip link
+17: qfv418874ff-5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether fa:16:3e:c8:c0:34 brd ff:ff:ff:ff:ff:ff
+19: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN 
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
 
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host guest-1 de8dfe12-99a3-454d-972a-edf98ec96fe0  "dhclient -4 -v qfvde8dfe12-9"
-VM port executeon guest-1: de8dfe12-99a3-454d-972a-edf98ec96fe0 dhclient -4 -v qfvde8dfe12-9
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest2 418874ff-571b-46e2-a28a-75fe8afcb9e1 "dhclient -4 -v qfv418874ff-5"
+ :::
+VM port executeon guest2: 418874ff-571b-46e2-a28a-75fe8afcb9e1 dhclient -4 -v qfv418874ff-5
 
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host guest-1 de8dfe12-99a3-454d-972a-edf98ec96fe0  "ifconfig"         
-VM port executeon guest-1: de8dfe12-99a3-454d-972a-edf98ec96fe0 ifconfig
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest2 418874ff-571b-46e2-a28a-75fe8afcb9e1 "ifconfig"
+ :::
+VM port executeon guest2: 418874ff-571b-46e2-a28a-75fe8afcb9e1 ifconfig
 lo        Link encap:Local Loopback  
           inet addr:127.0.0.1  Mask:255.0.0.0
           inet6 addr: ::1/128 Scope:Host
@@ -375,40 +435,162 @@ lo        Link encap:Local Loopback
           collisions:0 txqueuelen:0 
           RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
 
-qfvde8dfe12-9 Link encap:Ethernet  HWaddr fa:16:3e:12:08:c9  
+qfv418874ff-5 Link encap:Ethernet  HWaddr fa:16:3e:c8:c0:34  
           inet addr:10.0.0.4  Bcast:10.0.0.255  Mask:255.255.255.0
-          inet6 addr: fe80::f816:3eff:fe12:8c9/64 Scope:Link
+          inet6 addr: fe80::f816:3eff:fec8:c034/64 Scope:Link
           UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
-          RX packets:38 errors:0 dropped:0 overruns:0 frame:0
-          TX packets:7 errors:0 dropped:0 overruns:0 carrier:0
+          RX packets:22 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:15 errors:0 dropped:0 overruns:0 carrier:0
           collisions:0 txqueuelen:1000 
-          RX bytes:10468 (10.4 KB)  TX bytes:1134 (1.1 KB)
+          RX bytes:2130 (2.1 KB)  TX bytes:2734 (2.7 KB)
 
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf exec --host guest-1 de8dfe12-99a3-454d-972a-edf98ec96fe0  "ping -c 1 10.0.0.3"
-VM port executeon guest-1: de8dfe12-99a3-454d-972a-edf98ec96fe0 ping -c 1 10.0.0.3
+
+$ 
+
+
+Ping from the other node to the original node.
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest2 418874ff-571b-46e2-a28a-75fe8afcb9e1 "ping -c1 10.0.0.3"
+ :::
+VM port executeon guest2: 418874ff-571b-46e2-a28a-75fe8afcb9e1 ping -c1 10.0.0.3
 PING 10.0.0.3 (10.0.0.3) 56(84) bytes of data.
-64 bytes from 10.0.0.3: icmp_req=1 ttl=64 time=0.397 ms
+64 bytes from 10.0.0.3: icmp_req=1 ttl=64 time=10.9 ms
 
 --- 10.0.0.3 ping statistics ---
 1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 0.397/0.397/0.397/0.000 ms
+rtt min/avg/max/mdev = 10.921/10.921/10.921/0.000 ms
 
-And on ther other physical node, run ryu-agent and fakevm-agent
-    # python /usr/local/bin/quantum-ryu-agent --debug --verbose --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/ryu/ryu.ini --config-file ./etc/fakevm-guest-2.ini
-    # ./bin/quantum-fakevm-agent  --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/ryu/ryu.ini --nova-config-file /etc/nova/nova.conf --config-file ./etc/fakevm-guest-2.ini
+$ 
 
-Then operate on the original host
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf create-port --host guest-2 8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa i-zzzz
-VM port created on guest-2: vif_uuid: c3c8cceb-8d86-490c-8a7c-e77aba4dcd6b mac: fa:16:3e:43:6a:35 tenant_id: a63586fe94fc41bbbc80da8a8dd13125
-fixed_ips: [{u'subnet_id': u'77bcb894-e42d-4df0-83c8-86c9fcb49d40', u'ip_address': u'10.0.0.7'}]
-netowrk: {u'status': u'ACTIVE', u'subnets': [u'77bcb894-e42d-4df0-83c8-86c9fcb49d40'], u'name': u'private', u'admin_state_up': True, u'tenant_id': u'a63586fe94fc41bbbc80da8a8dd13125', u'router:external': False, u'shared': False, u'id': u'8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa'}
-
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf migrate --host guest-1 guest-2 de8dfe12-99a3-454d-972a-edf98ec96fe0
 
 Then try emulation of live-migration
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf create-port --host guest-1 8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa i-bbbb
-VM port created on guest-1: vif_uuid: 06dfad41-df1d-4352-af49-8a6089876c9d mac: fa:16:3e:bd:52:ee tenant_id: a63586fe94fc41bbbc80da8a8dd13125
-fixed_ips: [{u'subnet_id': u'77bcb894-e42d-4df0-83c8-86c9fcb49d40', u'ip_address': u'10.0.0.9'}]
-netowrk: {u'status': u'ACTIVE', u'subnets': [u'77bcb894-e42d-4df0-83c8-86c9fcb49d40'], u'name': u'private', u'admin_state_up': True, u'tenant_id': u'a63586fe94fc41bbbc80da8a8dd13125', u'router:external': False, u'shared': False, u'id': u'8e1cacc7-9e3a-4849-bf63-dfd20dcc51aa'}
-# ./bin/quantum-fakevm --config-file /etc/quantum/quantum.conf migrate --host guest-1 guest-2 06dfad41-df1d-4352-af49-8a6089876c9d
-VM migrate : 06dfad41-df1d-4352-af49-8a6089876c9d guest-1 -> guest-2
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest2 418874ff-571b-46e2-a28a-75fe8afcb9e1 "dhclient -4 -r qfv418874ff-5"
+ :::
+VM port executeon guest2: 418874ff-571b-46e2-a28a-75fe8afcb9e1 dhclient -4 -r qfv418874ff-5
+
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+migrate --host guest2 guest1 418874ff-571b-46e2-a28a-75fe8afcb9e1
+ :::
+VM migrate : 418874ff-571b-46e2-a28a-75fe8afcb9e1 guest2 -> guest1
+$ 
+$ ip link|grep qvo
+17: qvod7e577a9-a9: <BROADCAST,MULTICAST,PROMISC,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+32: qvo418874ff-57: <BROADCAST,MULTICAST,PROMISC,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+$ 
+
+
+* Multi node emulation
+
+On the original host, modify configuration to enable the multi node mode and
+restart FakeVM agent.
+
+fakevm.ini
+
+    [default]
+    debug = True
+    verbose = True
+    
+    [fakevm]
+    host = guest1
+    nova_conf = /etc/nova/nova.conf
+    fakevm_agent_plugin = quantum.debug.fakevm.fakevm_agent_ovs.QuantumFakeVMAgentOVS
+    enable_multi_node_emulate = True
+    use_tunnel = False
+    vir_bridge = br-fakevm
+
+$ quantum-fakevm-agent --config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini \
+--config-file ./fakevm.ini
+
+
+Run Quantum plugin agent and FakeVM agent on the same machine with differenct
+configuration.
+
+guest3.ini
+
+    [ovs]
+    integration_bridge = br-int2
+    bridge_mappings = phy1:br-eth2
+
+    [fakevm]
+    host = guest3
+
+$ quantum-fakevm-agent --config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini \
+--config-file ./fakevm.ini --config-file ./guest3.ini
+
+$ quantum-openvswitch-agent --debug --verbose \
+--config-file /etc/quantum/quantum.conf \
+--config-file /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini \
+--config-file ./guest3.ini
+
+
+Then create a port on the emulated node.
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+create-port --host guest3 5379c0d2-9a0d-4bc5-a028-a0c0c7df336d i-zzzz
+ :::
+VM port created on guest3: vif_uuid: c29cfc8c-c978-4025-8fa9-0a6c791bb31b mac: fa:16:3e:fc:f8:3e tenant_id: 43dd8e1496104939bca6256edf874661
+fixed_ips: [{u'subnet_id': u'ee138a17-cdf4-436f-b651-0245201ea71e', u'ip_address': u'10.0.0.5'}]
+netowrk: {u'status': u'ACTIVE', u'subnets': [u'ee138a17-cdf4-436f-b651-0245201ea71e'], u'name': u'private', u'provider:physical_network': u'phy1', u'admin_state_up': True, u'tenant_id': u'43dd8e1496104939bca6256edf874661', u'provider:network_type': u'vlan', u'router:external': False, u'shared': False, u'id': u'5379c0d2-9a0d-4bc5-a028-a0c0c7df336d', u'provider:segmentation_id': 200}
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest3 c29cfc8c-c978-4025-8fa9-0a6c791bb31b "ip link"
+ :::
+VM port executeon guest3: c29cfc8c-c978-4025-8fa9-0a6c791bb31b ip link
+49: qfvc29cfc8c-c: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether fa:16:3e:fc:f8:3e brd ff:ff:ff:ff:ff:ff
+51: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN 
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest3 c29cfc8c-c978-4025-8fa9-0a6c791bb31b "dhclient -4 -v qfvc29cfc8c-c"
+ :::
+VM port executeon guest3: c29cfc8c-c978-4025-8fa9-0a6c791bb31b dhclient -4 -v qfvc29cfc8c-c
+
+$ 
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest3 c29cfc8c-c978-4025-8fa9-0a6c791bb31b "ifconfig"
+ :::
+VM port executeon guest3: c29cfc8c-c978-4025-8fa9-0a6c791bb31b ifconfig
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:16436  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:0 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+qfvc29cfc8c-c Link encap:Ethernet  HWaddr fa:16:3e:fc:f8:3e  
+          inet addr:10.0.0.5  Bcast:10.0.0.255  Mask:255.255.255.0
+          inet6 addr: fe80::f816:3eff:fefc:f83e/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:21 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:10 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:2076 (2.0 KB)  TX bytes:1272 (1.2 KB)
+
+
+$ 
+
+
+Ping from the emulated node to the original node.
+
+$ quantum-fakevm --config-file /etc/quantum/quantum.conf \
+exec --host guest3 c29cfc8c-c978-4025-8fa9-0a6c791bb31b "ping -c1 10.0.0.3"
+ :::
+VM port executeon guest3: c29cfc8c-c978-4025-8fa9-0a6c791bb31b ping -c1 10.0.0.3
+PING 10.0.0.3 (10.0.0.3) 56(84) bytes of data.
+64 bytes from 10.0.0.3: icmp_req=1 ttl=64 time=11.8 ms
+
+--- 10.0.0.3 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 11.899/11.899/11.899/0.000 ms
+
+$ 
