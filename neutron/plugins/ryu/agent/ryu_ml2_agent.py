@@ -160,7 +160,10 @@ class OVSBridge(ovs_lib.OVSBridge):
     def setup_ofp(self, controller_names=None,
                   protocols='OpenFlow13', retry_max=60):
         if not controller_names:
-            controller_names = ["tcp:%s:%d" % (cfg.CONF.ofp_listen_host,
+            host = cfg.CONF.ofp_listen_host
+            if not host:
+                host = '127.0.0.1'
+            controller_names = ["tcp:%s:%d" % (host,
                                                cfg.CONF.ofp_tcp_listen_port)]
         try:
             self.set_protocols(protocols)
