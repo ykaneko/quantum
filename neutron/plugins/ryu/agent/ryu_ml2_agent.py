@@ -142,11 +142,10 @@ class OVSBridge(ovs_lib.OVSBridge):
     def find_datapath_id(self):
         self.datapath_id = self.get_datapath_id()
 
-    def get_datapath(self, app,
-                     retry_max=cfg.CONF.AGENT.get_datapath_retry_times):
+    def get_datapath(self, retry_max=cfg.CONF.AGENT.get_datapath_retry_times):
         retry = 0
         while self.datapath is None:
-            self.datapath = ryu_api.get_datapath(app,
+            self.datapath = ryu_api.get_datapath(RYUAPP_INST,
                                                  int(self.datapath_id, 16))
             retry += 1
             if retry > retry_max:
@@ -170,7 +169,7 @@ class OVSBridge(ovs_lib.OVSBridge):
             LOG.error(_("Agent terminated: %s"), e)
             sys.exit(1)
         self.find_datapath_id()
-        self.get_datapath(RYUAPP_INST, retry_max)
+        self.get_datapath(retry_max)
 
 
 class RyuPluginApi(agent_rpc.PluginApi,
@@ -325,8 +324,8 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
         except Exception:
             LOG.exception(_("Failed reporting state!"))
 
-    def ryu_send_msg(self, app, msg):
-        result = ryu_api.send_msg(app, msg)
+    def ryu_send_msg(self, msg):
+        result = ryu_api.send_msg(RYUAPP_INST, msg)
         LOG.info(_("ryu send_msg() result: %s"), result)
 
     def setup_rpc(self):
@@ -471,7 +470,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                         table_id=constants.FLOOD_TO_TUN,
                         priority=1,
                         match=match, instructions=instructions)
-                    self.ryu_send_msg(RYUAPP_INST, msg)
+                    self.ryu_send_msg(msg)
                 # inbound from tunnels: set lvid in the right table
                 # and resubmit to Table LEARN_FROM_TUN for mac learning
                 match = self.tun_br.ofparser.OFPMatch(
@@ -489,7 +488,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     priority=1,
                     match=match,
                     instructions=instructions)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
             else:
                 LOG.error(_("Cannot provision %(network_type)s network for "
                           "net-id=%(net_uuid)s - tunneling disabled"),
@@ -511,7 +510,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                              priority=4,
                                              match=match,
                                              instructions=instructions)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
                 # inbound
                 match = self.int_br.ofparser.OFPMatch(
                     in_port=int(self.int_ofports[physical_network]),
@@ -527,7 +526,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     priority=3,
                     match=match,
                     instructions=instructions)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
             else:
                 LOG.error(_("Cannot provision flat network for "
                             "net-id=%(net_uuid)s - no bridge for "
@@ -550,7 +549,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                              priority=4,
                                              match=match,
                                              instructions=instructions)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
                 # inbound
                 match = self.int_br.ofparser.OFPMatch(
                     in_port=int(self.int_ofports[physical_network]),
@@ -566,7 +565,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     priority=3,
                     match=match,
                     instructions=instructions)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
             else:
                 LOG.error(_("Cannot provision VLAN network for "
                             "net-id=%(net_uuid)s - no bridge for "
@@ -609,7 +608,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
                 match = self.tun_br.ofparser.OFPMatch(
                     vlan_vid=int(lvm.vlan) | ryu_ofp13.OFPVID_PRESENT)
                 msg = self.tun_br.ofparser.OFPFlowMod(
@@ -619,7 +618,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
         elif lvm.network_type == p_const.TYPE_FLAT:
             if lvm.physical_network in self.phys_brs:
                 # outbound
@@ -634,7 +633,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
                 # inbound
                 br = self.int_br
                 match = br.ofparser.OFPMatch(
@@ -647,7 +646,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
         elif lvm.network_type == p_const.TYPE_VLAN:
             if lvm.physical_network in self.phys_brs:
                 # outbound
@@ -662,7 +661,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
                 # inbound
                 br = self.int_br
                 match = br.ofparser.OFPMatch(
@@ -675,7 +674,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     out_group=ryu_ofp13.OFPG_ANY,
                     out_port=ryu_ofp13.OFPP_ANY,
                     match=match)
-                self.ryu_send_msg(RYUAPP_INST, msg)
+                self.ryu_send_msg(msg)
         elif lvm.network_type == p_const.TYPE_LOCAL:
             # no flows needed for local networks
             pass
@@ -715,7 +714,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                 out_group=ryu_ofp13.OFPG_ANY,
                 out_port=ryu_ofp13.OFPP_ANY,
                 match=match)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
 
     def port_unbound(self, vif_id, net_uuid=None):
         '''Unbind port.
@@ -750,7 +749,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
         match = self.tun_br.ofparser.OFPMatch(in_port=int(port.ofport))
         msg = self.int_br.ofparser.OFPFlowMod(self.int_br.datapath,
                                               priority=2, match=match)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
 
     def setup_integration_br(self):
         '''Setup the integration bridge.
@@ -767,7 +766,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                               command=ryu_ofp13.OFPFC_DELETE,
                                               out_group=ryu_ofp13.OFPG_ANY,
                                               out_port=ryu_ofp13.OFPP_ANY)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # switch all traffic using L2 learning
         actions = [self.int_br.ofparser.OFPActionOutput(
             ryu_ofp13.OFPP_NORMAL, 0)]
@@ -777,7 +776,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
         msg = self.int_br.ofparser.OFPFlowMod(self.int_br.datapath,
                                               priority=1,
                                               instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
 
     def setup_ancillary_bridges(self, integ_br, tun_br):
         '''Setup ancillary bridges - for example br-ex.'''
@@ -831,7 +830,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                               command=ryu_ofp13.OFPFC_DELETE,
                                               out_group=ryu_ofp13.OFPG_ANY,
                                               out_port=ryu_ofp13.OFPP_ANY)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
 
         # Table 0 (default) will sort incoming traffic depending on in_port
         match = self.tun_br.ofparser.OFPMatch(
@@ -842,9 +841,9 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                               priority=1,
                                               match=match,
                                               instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         msg = self.tun_br.ofparser.OFPFlowMod(self.tun_br.datapath, priority=0)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # PATCH_LV_TO_TUN table will handle packets coming from patch_int
         # unicasts go to table UCAST_TO_TUN where remote adresses are learnt
         match = self.tun_br.ofparser.OFPMatch(eth_dst=('00:00:00:00:00:00',
@@ -856,7 +855,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
             table_id=constants.PATCH_LV_TO_TUN,
             match=match,
             instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # Broadcasts/multicasts go to table FLOOD_TO_TUN that handles flooding
         match = self.tun_br.ofparser.OFPMatch(eth_dst=('01:00:00:00:00:00',
                                                        '01:00:00:00:00:00'))
@@ -866,7 +865,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
             self.tun_br.datapath,
             table_id=constants.PATCH_LV_TO_TUN,
             match=match, instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # Tables [tunnel_type]_TUN_TO_LV will set lvid depending on tun_id
         # for each tunnel type, and resubmit to table LEARN_FROM_TUN where
         # remote mac adresses will be learnt
@@ -875,7 +874,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                 self.tun_br.datapath,
                 table_id=constants.TUN_TABLE[tunnel_type],
                 priority=0)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
         # Packet is outputed to patch_int
         actions = [self.tun_br.ofparser.OFPActionOutput(
             int(self.patch_int_ofport), 0)]
@@ -887,7 +886,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
             table_id=constants.LEARN_FROM_TUN,
             priority=1,
             instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # Egress unicast will be handled in table UCAST_TO_TUN.
         # For now, just add a default flow that will go unknown unicasts
         # to table FLOOD_TO_TUN to treat them as broadcasts/multicasts
@@ -898,14 +897,14 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
             table_id=constants.UCAST_TO_TUN,
             priority=0,
             instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
         # FLOOD_TO_TUN will handle flooding in tunnels based on lvid,
         # for now, add a default drop action
         msg = self.tun_br.ofparser.OFPFlowMod(
             self.tun_br.datapath,
             table_id=constants.FLOOD_TO_TUN,
             priority=0)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
 
     def setup_physical_bridges(self, bridge_mappings):
         '''Setup the physical network bridges.
@@ -939,7 +938,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                          command=ryu_ofp13.OFPFC_DELETE,
                                          out_group=ryu_ofp13.OFPG_ANY,
                                          out_port=ryu_ofp13.OFPP_ANY)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
             actions = [br.ofparser.OFPActionOutput(ryu_ofp13.OFPP_NORMAL, 0)]
             instructions = [br.ofparser.OFPInstructionActions(
                 ryu_ofp13.OFPIT_APPLY_ACTIONS,
@@ -947,7 +946,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
             msg = br.ofparser.OFPFlowMod(br.datapath,
                                          priority=1,
                                          instructions=instructions)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
             self.phys_brs[physical_network] = br
 
             # create veth to patch physical bridge with integration bridge
@@ -971,11 +970,11 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                 self.int_ofports[physical_network]))
             msg = br.ofparser.OFPFlowMod(self.int_br.datapath,
                                          priority=2, match=match)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
             match = br.ofparser.OFPMatch(in_port=int(
                 self.phys_ofports[physical_network]))
             msg = br.ofparser.OFPFlowMod(br.datapath, priority=2, match=match)
-            self.ryu_send_msg(RYUAPP_INST, msg)
+            self.ryu_send_msg(msg)
 
             # enable veth to pass traffic
             int_veth.link.set_up()
@@ -1048,7 +1047,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                               priority=1,
                                               match=match,
                                               instructions=instructions)
-        self.ryu_send_msg(RYUAPP_INST, msg)
+        self.ryu_send_msg(msg)
 
         ofports = ','.join(self.tun_br_ofports[tunnel_type].values())
         if ofports:
@@ -1073,7 +1072,7 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                         priority=1,
                         match=match,
                         instructions=instructions)
-                    self.ryu_send_msg(RYUAPP_INST, msg)
+                    self.ryu_send_msg(msg)
         return ofport
 
     def cleanup_tunnel_port(self, tun_ofport, tunnel_type):
