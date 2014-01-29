@@ -53,8 +53,6 @@ from ryu.base import app_manager
 from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3 as ryu_ofp13
 from ryu.app.ofctl import api as ryu_api
-from ryu.app.ofctl import event as ryu_event
-from ryu.app.ofctl import service as ryu_service
 
 
 LOG = logging.getLogger(__name__)
