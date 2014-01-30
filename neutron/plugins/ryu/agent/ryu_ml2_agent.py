@@ -155,7 +155,8 @@ class OVSBridge(ovs_lib.OVSBridge):
         self.ofparser = self.datapath.ofproto_parser
 
     def setup_ofp(self, controller_names=None,
-                  protocols='OpenFlow13', retry_max=60):
+                  protocols='OpenFlow13',
+                  retry_max=cfg.CONF.AGENT.get_datapath_retry_times):
         if not controller_names:
             host = cfg.CONF.ofp_listen_host
             if not host:
