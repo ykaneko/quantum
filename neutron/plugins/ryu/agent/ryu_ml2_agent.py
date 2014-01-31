@@ -25,10 +25,8 @@ import distutils.version as dist_version
 import sys
 import time
 
-import eventlet
 from oslo.config import cfg
 
-from neutron.agent import l2population_rpc
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import ovs_lib
 from neutron.agent.linux import polling
@@ -36,7 +34,6 @@ from neutron.agent.linux import utils
 from neutron.agent import rpc as agent_rpc
 from neutron.agent import securitygroups_rpc as sg_rpc
 from neutron.common import constants as q_const
-from neutron.common import legacy
 from neutron.common import topics
 from neutron.common import utils as q_utils
 from neutron import context
@@ -46,13 +43,13 @@ from neutron.openstack.common import loopingcall
 from neutron.openstack.common.rpc import common as rpc_common
 from neutron.openstack.common.rpc import dispatcher
 from neutron.plugins.common import constants as p_const
-from neutron.plugins.ryu.common import config_ml2
+from neutron.plugins.ryu.common import config_ml2  # noqa
 from neutron.plugins.ryu.common import constants
 
+from ryu.app.ofctl import api as ryu_api
 from ryu.base import app_manager
 from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3 as ryu_ofp13
-from ryu.app.ofctl import api as ryu_api
 
 
 LOG = logging.getLogger(__name__)
