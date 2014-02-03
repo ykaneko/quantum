@@ -126,7 +126,7 @@ class OVSBridge(ovs_lib.OVSBridge):
         self.run_vsctl(["--", "del-controller", self.br_name])
 
     def get_controller(self):
-        res = self.run_vsctl(["get-controller", self.br_name])
+        res = self.run_vsctl(["--", "get-controller", self.br_name])
         if res:
             return res.strip().split("\n")
         return []
@@ -145,7 +145,7 @@ class OVSBridge(ovs_lib.OVSBridge):
             self.datapath = ryu_api.get_datapath(RYUAPP_INST,
                                                  int(self.datapath_id, 16))
             retry += 1
-            if retry > retry_max:
+            if retry >= retry_max:
                 LOG.error(_('Agent terminated!: Failed to get a datapath.'))
                 sys.exit(1)
             time.sleep(1)
