@@ -40,3 +40,29 @@ def patch_fake_ryu_client():
                             'ryu.app.client': ryu_app_client,
                             'ryu.app.conf_switch_key': conf_switch_key,
                             'ryu.app.rest_nw_id': rest_nw_id})
+
+def patch_fake_ryu_of():
+    ryu_mod = mock.Mock()
+    ryu_base_mod = ryu_mod.base
+    ryu_lib_mod = ryu_mod.lib
+    ryu_lib_hub = ryu_lib_mod.hub
+    ryu_ofproto_mod = ryu_mod.ofproto
+    ryu_ofproto_of13 = ryu_ofproto_mod.ofproto_v1_3
+    ryu_ofproto_of13.OFPTT_ALL = 0xff
+    ryu_ofproto_of13.OFPG_ANY = 0xffffffff
+    ryu_ofproto_of13.OFPP_ANY = 0xffffffff
+    ryu_ofproto_of13.OFPFC_ADD = 0
+    ryu_ofproto_of13.OFPFC_DELETE = 3
+    ryu_app_mod = ryu_mod.app
+    ryu_app_ofctl_mod = ryu_app_mod.ofctl
+    ryu_ofctl_api = ryu_app_ofctl_mod.api
+    return mock.patch.dict('sys.modules',
+                           {'ryu': ryu_mod,
+                            'ryu.base': ryu_base_mod,
+                            'ryu.lib': ryu_lib_mod,
+                            'ryu.lib.hub': ryu_lib_hub,
+                            'ryu.ofproto': ryu_ofproto_mod,
+                            'ryu.ofproto.ofproto_v1_3': ryu_ofproto_of13,
+                            'ryu.app': ryu_app_mod,
+                            'ryu.app.ofctl': ryu_app_ofctl_mod,
+                            'ryu.app.ofctl.api': ryu_ofctl_api})
