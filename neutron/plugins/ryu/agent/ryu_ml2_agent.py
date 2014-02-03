@@ -450,15 +450,18 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
         if network_type in constants.TUNNEL_NETWORK_TYPES:
             if self.enable_tunneling:
                 # outbound broadcast/multicast
-                ofports = ','.join(self.tun_br_ofports[network_type].values())
+                ofports = [int(ofport) for ofport in
+                           self.tun_br_ofports[network_type].values()]
                 if ofports:
                     match = self.tun_br.ofparser.OFPMatch(
                         vlan_vid=int(lvid) | ryu_ofp13.OFPVID_PRESENT)
                     actions = [
                         self.tun_br.ofparser.OFPActionPopVlan(),
                         self.tun_br.ofparser.OFPActionSetField(
-                            tunnel_id=int(segmentation_id)),
-                        self.tun_br.ofparser.OFPActionOutput(int(ofports), 0)]
+                            tunnel_id=int(segmentation_id))]
+                    for ofport in ofports:
+                        actions.append(
+                            self.tun_br.ofparser.OFPActionOutput(ofport, 0))
                     instructions = [
                         self.tun_br.ofparser.OFPInstructionActions(
                             ryu_ofp13.OFPIT_APPLY_ACTIONS,
@@ -1047,7 +1050,8 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                                               instructions=instructions)
         self.ryu_send_msg(msg)
 
-        ofports = ','.join(self.tun_br_ofports[tunnel_type].values())
+        ofports = [int(ofport) for ofport in
+                   self.tun_br_ofports[tunnel_type].values()]
         if ofports:
             # Update flooding flows to include the new tunnel
             for network_id, vlan_mapping in self.local_vlan_map.iteritems():
@@ -1058,8 +1062,10 @@ class RyuNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
                     actions = [
                         self.tun_br.ofparser.OFPActionPopVlan(),
                         self.tun_br.ofparser.OFPActionSetField(
-                            tunnel_id=int(vlan_mapping.segmentation_id)),
-                        self.tun_br.ofparser.OFPActionOutput(int(ofports), 0)]
+                            tunnel_id=int(vlan_mapping.segmentation_id))]
+                    for ofport in ofports:
+                        actions.append(
+                            self.tun_br.ofparser.OFPActionOutput(ofport, 0))
                     instructions = [
                         self.tun_br.ofparser.OFPInstructionActions(
                             ryu_ofp13.OFPIT_APPLY_ACTIONS,
